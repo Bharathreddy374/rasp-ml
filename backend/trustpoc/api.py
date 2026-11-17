@@ -23,7 +23,7 @@ from fastapi.concurrency import run_in_threadpool
 from pydantic import ValidationError
 
 from .pipeline import Pipeline
-from .geo import GeoIP
+from .geo import GeoIP, scope_of
 from .retrieval import PROXY_HEADERS, Request as RequestFacts
 from .schema import CollectPayload
 from .scoring import ModelService
@@ -71,6 +71,24 @@ def build_store(s: Settings) -> Store:
     return PostgresStore(s.database_url, s.db_schema)
 
 
+def forwarded_client(header: str) -> str | None:
+    """The client address from X-Forwarded-For behind trusted proxies.
+
+    Each proxy APPENDS the address it received the request from, so the chain is
+    "<anything the client sent>, <client>, <internal proxy hops>". Walk it from the right,
+    skip the proxies' own internal (private / loopback / link-local) hops and return the first
+    public address. Entries left of it come from the client and can be forged, so they are never used.
+    (Render, for example, appends an internal 10.x hop after the real client address.)
+    """
+    hops = [h.strip() for h in header.split(",") if h.strip()]
+    for hop in reversed(hops):
+        if scope_of(hop) == "public":
+            return hop
+        if scope_of(hop) == "invalid":
+            break
+    return hops[-1] if hops and scope_of(hops[-1]) != "invalid" else None
+
+
 def create_app(settings: Settings | None = None, store: Store | None = None,
                model: ModelService | None = None) -> FastAPI:
     s = settings or Settings.from_env()
@@ -97,11 +115,9 @@ def create_app(settings: Settings | None = None, store: Store | None = None,
 
     def client_ip(request: Request) -> str | None:
         if s.trust_proxy:
-            # The trusted proxy APPENDS the address it saw, so take the last entry. Earlier entries
-            # come from the client and can be forged.
-            forwarded = request.headers.get("x-forwarded-for", "")
-            if forwarded.strip():
-                return forwarded.split(",")[-1].strip()
+            ip = forwarded_client(request.headers.get("x-forwarded-for", ""))
+            if ip:
+                return ip
         return request.client.host if request.client else None
 
     @app.get("/health")

@@ -53,8 +53,16 @@ class ApiTest(unittest.TestCase):
         call(app, "POST", "/v1/collect", phone(), headers={"x-forwarded-for": "198.51.100.7"})
         self.assertEqual(store.get(store.list_sessions(None, None, 1)[0]["id"])["session"]["client_ip"], "203.0.113.9")
         app, store = make(trust_proxy=True)
-        call(app, "POST", "/v1/collect", phone(), headers={"x-forwarded-for": "6.6.6.6, 198.51.100.7"})   # first entry forged by the client
-        self.assertEqual(store.get(store.list_sessions(None, None, 1)[0]["id"])["session"]["client_ip"], "198.51.100.7")
+        call(app, "POST", "/v1/collect", phone(), headers={"x-forwarded-for": "6.6.6.6, 49.36.10.5, 10.24.134.135"})   # forged, client, Render hop
+        self.assertEqual(store.get(store.list_sessions(None, None, 1)[0]["id"])["session"]["client_ip"], "49.36.10.5")
+
+    def test_forwarded_client_skips_internal_hops(self):
+        from trustpoc.api import forwarded_client
+        self.assertEqual(forwarded_client("49.36.10.5"), "49.36.10.5")
+        self.assertEqual(forwarded_client("1.2.3.4, 49.36.10.5, 10.0.0.2, 127.0.0.1"), "49.36.10.5")
+        self.assertEqual(forwarded_client("10.0.0.7"), "10.0.0.7")            # all internal: the nearest hop
+        self.assertIsNone(forwarded_client(""))
+        self.assertIsNone(forwarded_client("garbage"))
 
     def test_retry_is_idempotent(self):
         app, store = make()
