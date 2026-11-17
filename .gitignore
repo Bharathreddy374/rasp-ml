@@ -28,3 +28,8 @@ frida-server*
 frida-inject*
 
 .DS_Store
+
+# Release signing (keep a private backup; losing it means teammates must uninstall to update)
+android/keystore.properties
+android/keystore/
+dist/
