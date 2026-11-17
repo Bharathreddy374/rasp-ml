@@ -1,6 +1,13 @@
-# Payload specification (schema 2)
+# Payload specification
 
-This is the wire contract between the Android app (`android/…/features/network/`) and the backend (`backend/app.py`, `trustpoc/engine.py`). Anyone writing a client or server must follow it exactly.
+The app can produce two payload formats:
+
+| Format | Sent by | Signed | Receiver |
+|---|---|---|---|
+| **`rasp_collect_v2`** ([§11](#11-rasp_collect_v2-collector-format)) | **Send to API** dialog, **Copy JSON**, **Share** (current app UI) | No | External data collector, at any URL you enter |
+| **schema 2** (§1–10) | `BackendApiClient.assess()` | Yes: nonce + hardware attestation + ECDSA | This repo's backend, `POST /v2/assess` |
+
+Sections 1–10 describe the signed schema 2. That is the wire contract between the Android app (`android/…/features/network/`) and the backend (`backend/app.py`, `trustpoc/engine.py`). Anyone writing a client or server must follow it exactly.
 
 **Complete real example:** [examples/payload_example.json](examples/payload_example.json). These are the 232 signals from a genuine phone (vivo I2221, Android 16), with install ID, nonce, fingerprint and install path replaced.
 
@@ -272,3 +279,51 @@ The certificate chain is most of the compressed size; certificates do not compre
 | `POST /v1/features` | unsigned 370-signal report | **Disabled** (410) unless `ALLOW_UNSIGNED_REPORTS=1` |
 
 Changing the payload format means raising `schema` and adding a new endpoint version. Never change the meaning of an existing signal ID; add new IDs instead.
+
+## 11. `rasp_collect_v2` (collector format)
+
+Built by `android/…/features/network/CollectPayload.kt`. It is sent as **plain JSON** (`POST`, `Content-Type: application/json`, no gzip) to the full collector URL entered in the **Send to API** dialog; the app remembers the URL. It is also what **Copy JSON** and **Share** produce.
+
+```json
+{
+  "schema": "rasp_collect_v2",
+  "action": "transfer",
+  "context_keys": {
+    "install_id": "i_548295d787bb4a15b00f4102e4755a9f",
+    "session_id": "session-64f6be3c-0bd6-4589-a0b1-afc96fbc7123"
+  },
+  "device": {
+    "manufacturer": "vivo", "model": "I2221", "android_release": "16", "sdk_int": 36,
+    "fingerprint": "iQOO/I2221i/I2221:16/…:user/release-keys",
+    "security_patch": "2026-10-01", "scan_timestamp": "2026-11-17T23:54:56+05:30"
+  },
+  "app": { "version_code": 1 },
+  "signals": {
+    "F016": 0,
+    "F018": ["release-keys", 0],
+    "F031": ["Enforcing", 0],
+    "F146": 0,
+    "F206": 1.06,
+    "F231": 0.07073,
+    "F278": ["Enabled", 1],
+    "battery_temp_c": 32.8
+  },
+  "unknown": ["F034", "F035", "…"],
+  "failed_groups": []
+}
+```
+
+| Field | Meaning |
+|---|---|
+| `context_keys.install_id` | Per-install ID, stable until the app is reinstalled |
+| `context_keys.session_id` | New for every send |
+| `device.scan_timestamp` | ISO-8601 with UTC offset, phone clock |
+| `signals` | The same device-observed signals as schema 2 (§5.2). **55 fixed IDs** are sent as `[value, risk]`; all others as the bare typed value. |
+| `signals.battery_temp_c` | Battery temperature in °C (extra key, not a catalogue ID) |
+| `unknown`, `failed_groups` | As in §5.3 and §5.4 |
+
+The 55 pair IDs, listed in `CollectPayload.PAIR_IDS`: F018–F021, F028, F031, F037–F041, F043, F045–F047, F050, F051, F053, F055, F057–F060, F063, F065, F098, F099, F108, F109, F113, F117, F118, F121, F124–F132, F137–F143, F166, F257, F278–F280, F282. An ID that is unknown on a device goes to `unknown` instead.
+
+**Security:** `rasp_collect_v2` has **no nonce, counter, app identity, signature or attestation**. The receiver cannot tell a genuine device from a forged or replayed request, so use it for data collection, not for trust decisions. Release builds allow HTTPS only, so the collector URL must be `https://` in production.
+
+Measured on the genuine phone: 231 signals (54 as pairs, F257 being unknown), 54 unknown, 5.2 KB.

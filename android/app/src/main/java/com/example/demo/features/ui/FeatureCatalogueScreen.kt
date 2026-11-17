@@ -70,6 +70,7 @@ import com.example.demo.features.model.SignalCategory
 import com.example.demo.features.model.SignalResult
 import com.example.demo.features.network.ApiResponse
 import com.example.demo.features.network.BackendApiClient
+import com.example.demo.features.network.CollectPayload
 import com.example.demo.features.scanner.FeatureCatalogueScanner
 import com.example.demo.features.scanner.ScanSummary
 import kotlinx.coroutines.launch
@@ -174,14 +175,14 @@ fun FeatureCatalogueScreen() {
                         onOpenBackendInfo = { showBackendInfoDialog = true },
                         onOpenSendApi = { showSendApiDialog = true },
                         onExportJson = {
-                            val json = FeatureCatalogueScanner.exportToJson(summary)
+                            val json = CollectPayload.build(context, summary, "transfer")
                             val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
                             val clip = ClipData.newPlainText("Device Features JSON", json)
                             clipboard.setPrimaryClip(clip)
-                            Toast.makeText(context, "Full 370 Signals JSON copied to clipboard!", Toast.LENGTH_SHORT).show()
+                            Toast.makeText(context, "rasp_collect_v2 payload copied to clipboard", Toast.LENGTH_SHORT).show()
                         },
                         onShare = {
-                            val json = FeatureCatalogueScanner.exportToJson(summary)
+                            val json = CollectPayload.build(context, summary, "transfer")
                             val sendIntent = Intent().apply {
                                 action = Intent.ACTION_SEND
                                 putExtra(Intent.EXTRA_TEXT, json)
@@ -770,19 +771,20 @@ fun SendToBackendDialog(
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
 
-    var baseUrl by remember { mutableStateOf(BackendApiClient.getSavedBaseUrl(context)) }
+    var collectorUrl by remember { mutableStateOf(BackendApiClient.getCollectorUrl(context)) }
     var isSending by remember { mutableStateOf(false) }
     var apiResponse by remember { mutableStateOf<ApiResponse?>(null) }
 
     fun send() {
-        if (baseUrl.isBlank()) {
-            Toast.makeText(context, "Please enter the backend address", Toast.LENGTH_SHORT).show()
+        val url = collectorUrl.trim()
+        if (!url.startsWith("http://") && !url.startsWith("https://")) {
+            Toast.makeText(context, "Enter the full collector URL (http:// or https://)", Toast.LENGTH_SHORT).show()
             return
         }
-        BackendApiClient.saveBaseUrl(context, baseUrl)
+        BackendApiClient.saveCollectorUrl(context, url)
         isSending = true
         scope.launch {
-            val (fresh, response) = BackendApiClient.assess(context, baseUrl)
+            val (fresh, response) = BackendApiClient.sendCollect(context, url)
             fresh?.let(onScanned)
             apiResponse = response
             isSending = false
@@ -791,42 +793,27 @@ fun SendToBackendDialog(
 
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text(text = "Signed Trust Assessment", fontWeight = FontWeight.Bold) },
+        title = { Text(text = "Send rasp_collect_v2", fontWeight = FontWeight.Bold) },
         text = {
             Column(
                 modifier = Modifier.verticalScroll(rememberScrollState()),
                 verticalArrangement = Arrangement.spacedBy(10.dp)
             ) {
                 Text(
-                    text = "Gets a one-time nonce, creates a hardware-attested key with it, rescans, " +
-                        "signs the compact payload and sends it gzipped to /v2/assess.",
+                    text = "Rescans and POSTs the rasp_collect_v2 payload as plain JSON to the collector. " +
+                        "Unsigned: no nonce or attestation.",
                     style = MaterialTheme.typography.bodySmall
                 )
 
                 OutlinedTextField(
-                    value = baseUrl,
-                    onValueChange = { baseUrl = it },
-                    label = { Text("Backend address") },
-                    placeholder = { Text(BackendApiClient.DEFAULT_BASE_URL) },
+                    value = collectorUrl,
+                    onValueChange = { collectorUrl = it },
+                    label = { Text("Collector URL (full endpoint)") },
+                    placeholder = { Text("https://collector.example.com/collect") },
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth(),
                     shape = RoundedCornerShape(8.dp)
                 )
-
-                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                    OutlinedButton(
-                        onClick = { baseUrl = BackendApiClient.DEFAULT_BASE_URL },
-                        modifier = Modifier.weight(1f),
-                        shape = RoundedCornerShape(6.dp),
-                        contentPadding = ButtonDefaults.TextButtonContentPadding
-                    ) { Text("Laptop (192.168.1.5)", fontSize = 10.sp) }
-                    OutlinedButton(
-                        onClick = { baseUrl = BackendApiClient.EMULATOR_BASE_URL },
-                        modifier = Modifier.weight(1f),
-                        shape = RoundedCornerShape(6.dp),
-                        contentPadding = ButtonDefaults.TextButtonContentPadding
-                    ) { Text("Emulator (10.0.2.2)", fontSize = 10.sp) }
-                }
 
                 if (isSending) {
                     Row(
@@ -838,7 +825,7 @@ fun SendToBackendDialog(
                     ) {
                         CircularProgressIndicator(modifier = Modifier.size(24.dp))
                         Spacer(modifier = Modifier.width(12.dp))
-                        Text("Attesting, scanning and scoring...", style = MaterialTheme.typography.bodyMedium)
+                        Text("Scanning and sending...", style = MaterialTheme.typography.bodyMedium)
                     }
                 }
 
@@ -847,7 +834,7 @@ fun SendToBackendDialog(
         },
         confirmButton = {
             Button(onClick = { send() }, enabled = !isSending) {
-                Text(if (isSending) "Sending..." else "Assess device")
+                Text(if (isSending) "Sending..." else "Send payload")
             }
         },
         dismissButton = {
@@ -883,7 +870,7 @@ private fun AssessmentResultCard(response: ApiResponse) {
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Text(
-                    text = if (response.isSuccess) "Assessed (HTTP ${response.statusCode})" else "Error HTTP ${response.statusCode}",
+                    text = if (response.isSuccess) "Sent (HTTP ${response.statusCode})" else "Error HTTP ${response.statusCode}",
                     fontWeight = FontWeight.Bold,
                     color = if (response.isSuccess) Color(0xFF1B5E20) else Color(0xFFB71C1C)
                 )
@@ -894,7 +881,7 @@ private fun AssessmentResultCard(response: ApiResponse) {
                 Text(
                     text = "Payload ${"%.1f".format(response.payloadBytes / 1024.0)} KB, " +
                         "${"%.1f".format(response.wireBytes / 1024.0)} KB on the wire (gzip)" +
-                        if (response.attested) " · hardware-attested" else " · NOT attested",
+                        if (response.attested) " · hardware-attested" else " · unsigned",
                     style = small, fontSize = 11.sp, color = muted
                 )
             }

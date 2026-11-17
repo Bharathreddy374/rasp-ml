@@ -86,8 +86,11 @@ On the phone:
 
 1. Connect the phone and laptop to the same Wi-Fi. Find the laptop IP with `ipconfig`.
 2. Open the app. It scans automatically and lists all 370 signals with their status. Grey **NOT IMPLEMENTED** rows are sent as unknown.
-3. Tap **Send to API**, enter `http://<laptop-ip>:8000` (the emulator uses `http://10.0.2.2:8000`), then tap **Assess device**.
-4. The card shows the trust level, outcome, rules / ML levels, reasons, attestation verdict and payload size.
+3. Tap **Send to API**, enter the **full collector URL** (e.g. `https://collector.example.com/collect`), then tap **Send payload**. The app rescans and POSTs the `rasp_collect_v2` payload as plain JSON (see [PAYLOAD.md §11](PAYLOAD.md#11-rasp_collect_v2-collector-format)).
+4. The card shows the HTTP status, payload size and the collector's reply. If the reply uses this backend's decision format, it also shows the trust level and reasons.
+5. **Copy JSON** and **Share** produce the same `rasp_collect_v2` payload, so you can inspect it.
+
+The signed schema-2 flow to this repo's backend (`/v2/assess`) is still in the code (`BackendApiClient.assess()`), but the dialog no longer calls it.
 
 Launch the app from the home screen, **not with the debugger attached**. An attached debugger is real instrumentation and gives Level 4.
 

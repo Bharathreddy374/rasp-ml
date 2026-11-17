@@ -75,6 +75,49 @@ object BackendApiClient {
             .edit().putString(KEY_API_URL, normalizeBaseUrl(url)).apply()
     }
 
+    private const val KEY_COLLECTOR_URL = "collector_url"
+
+    /** Full URL of the external collector that receives rasp_collect_v2 payloads. */
+    fun getCollectorUrl(context: Context): String =
+        context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).getString(KEY_COLLECTOR_URL, "") ?: ""
+
+    fun saveCollectorUrl(context: Context, url: String) {
+        context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            .edit().putString(KEY_COLLECTOR_URL, url.trim()).apply()
+    }
+
+    /**
+     * Scans and POSTs a rasp_collect_v2 payload (plain JSON, unsigned) to [url].
+     * Returns the fresh scan together with the collector's answer.
+     */
+    suspend fun sendCollect(
+        context: Context,
+        url: String,
+        action: String = "transfer",
+    ): Pair<ScanSummary?, ApiResponse> = withContext(Dispatchers.IO) {
+        val t0 = System.currentTimeMillis()
+        try {
+            val summary = FeatureCatalogueScanner.scanAll(context)
+            val body = CollectPayload.build(context, summary, action).toByteArray(Charsets.UTF_8)
+            val (code, text) = postJson(url.trim(), body, gzip = false)
+            val ok = code in 200..299
+            summary to ApiResponse(
+                isSuccess = ok, statusCode = code, responseBody = text,
+                result = if (ok) parseResult(text)?.takeIf { it.level in 1..5 } else null,
+                errorMessage = if (ok) null else "Collector returned HTTP $code: ${detailOf(text)}",
+                durationMs = System.currentTimeMillis() - t0,
+                payloadBytes = body.size, wireBytes = body.size, attested = false,
+            )
+        } catch (e: Exception) {
+            null to ApiResponse(
+                isSuccess = false, statusCode = -1, responseBody = "",
+                errorMessage = "Connection error: ${e.localizedMessage ?: e.javaClass.simpleName}. " +
+                    "Check the collector URL and that this device can reach it.",
+                durationMs = System.currentTimeMillis() - t0
+            )
+        }
+    }
+
     fun normalizeBaseUrl(url: String): String =
         url.trim().removeSuffix("/").removeSuffix("/v1/features").removeSuffix("/v2/assess").removeSuffix("/")
 
