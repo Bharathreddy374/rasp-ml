@@ -5,5 +5,4 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY . .
 # Train at build time so the pickled model always matches the installed scikit-learn.
 RUN python -m unittest discover -s tests && python train_shadow.py
-ENV DEMO_MODE=1
 CMD uvicorn app:app --host 0.0.0.0 --port ${PORT:-8000}

@@ -38,6 +38,7 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
@@ -918,10 +919,38 @@ private fun AssessmentResultCard(response: ApiResponse) {
                     }
                 }
 
+                result.riskScore?.let { score ->
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.Bottom
+                    ) {
+                        Text(text = "Risk score", style = small, fontWeight = FontWeight.SemiBold)
+                        Text(
+                            text = "$score / 100",
+                            fontWeight = FontWeight.Bold, fontSize = 20.sp, color = levelColor
+                        )
+                    }
+                    LinearProgressIndicator(
+                        progress = { score / 100f },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(8.dp)
+                            .clip(RoundedCornerShape(4.dp)),
+                        color = levelColor,
+                        trackColor = levelColor.copy(alpha = 0.15f),
+                    )
+                    Text(
+                        text = "0 = no risk · 100 = critical. Level ${result.level} covers ${(result.level - 1) * 20}-${if (result.level == 5) 100 else result.level * 20 - 1}.",
+                        style = label, color = muted
+                    )
+                }
+
                 Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                     Text(text = "Rules level: ${result.rulesLevel}", style = small, fontWeight = FontWeight.SemiBold)
                     Text(text = "ML level: ${result.mlLevel ?: "off"}", style = small, fontWeight = FontWeight.SemiBold)
                 }
+                result.modelSummary?.let { Text(text = it, style = label, color = muted) }
 
                 result.coverage?.let { c ->
                     Text(

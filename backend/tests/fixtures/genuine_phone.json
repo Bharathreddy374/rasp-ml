@@ -1,0 +1,472 @@
+{
+ "schema": "rasp_collect_v2",
+ "action": "transfer",
+ "context_keys": {
+  "install_id": "i_fixture0000000000000000000000aa",
+  "session_id": "session-fixture-0001"
+ },
+ "device": {
+  "manufacturer": "vivo",
+  "model": "I2221",
+  "android_release": "16",
+  "sdk_int": 36,
+  "fingerprint": "iQOO/I2221i/I2221:16/BP2A.250605.031.A3_V000L1/compiler261106110651:user/release-keys",
+  "security_patch": "2026-10-01",
+  "scan_timestamp": "2026-11-17T23:54:56+05:30"
+ },
+ "app": {
+  "version_code": 1
+ },
+ "signals": {
+  "F016": 0,
+  "F017": 1,
+  "F018": [
+   "release-keys",
+   0
+  ],
+  "F019": [
+   "user",
+   0
+  ],
+  "F020": [
+   "Consistent",
+   0
+  ],
+  "F021": [
+   "qcom / pineapple",
+   0
+  ],
+  "F022": "green",
+  "F023": 1,
+  "F024": "23f96e12...",
+  "F026": 0,
+  "F027": "None",
+  "F028": [
+   "Stock OEM signature",
+   0
+  ],
+  "F029": "vivo",
+  "F030": "Patch: 2026-10-01",
+  "F031": [
+   "Enforcing",
+   0
+  ],
+  "F032": "Standard",
+  "F033": "u:r:untrusted_app:s0:c198,c257,c512,c768",
+  "F037": [
+   "Not found",
+   0
+  ],
+  "F038": [
+   "Not accessible",
+   0
+  ],
+  "F039": [
+   0,
+   0
+  ],
+  "F040": [
+   0,
+   0
+  ],
+  "F041": [
+   "Clean",
+   0
+  ],
+  "F042": "Not present",
+  "F043": [
+   "Not installed",
+   0
+  ],
+  "F044": "none",
+  "F045": [
+   "Not installed",
+   0
+  ],
+  "F046": [
+   "Not installed",
+   0
+  ],
+  "F047": [
+   "Not found",
+   0
+  ],
+  "F049": 0,
+  "F050": [
+   "Read-Only (Standard)",
+   0
+  ],
+  "F051": [
+   "Read-Only (Standard)",
+   0
+  ],
+  "F052": "Present",
+  "F053": [
+   "Clean (exec denied)",
+   0
+  ],
+  "F055": [
+   6,
+   1
+  ],
+  "F056": "183 mounts",
+  "F057": [
+   "None",
+   0
+  ],
+  "F058": [
+   "None",
+   0
+  ],
+  "F059": [
+   "Standard initramfs",
+   0
+  ],
+  "F060": [
+   "None",
+   0
+  ],
+  "F061": 0,
+  "F063": [
+   "RO (Enforced)",
+   0
+  ],
+  "F064": "enforcing",
+  "F065": [
+   "RO (Enforced)",
+   0
+  ],
+  "F066": 0,
+  "F067": "6.1.145-android14-11-g0f62335d867d-ab16017550",
+  "F068": "Protected",
+  "F069": "Restricted (Standard)",
+  "F070": "Protected",
+  "F071": "Protected / masked",
+  "F073": "Clean",
+  "F074": "Clean",
+  "F075": "Clean",
+  "F076": "87a38338387e0d42...",
+  "F077": "87a38338387e0d42...",
+  "F078": false,
+  "F079": "v2",
+  "F080": "False (v2+ active)",
+  "F082": 1,
+  "F083": true,
+  "F084": "100d3c6f859e17748e708169d3b4d42f",
+  "F085": 13,
+  "F086": "f64c3c543aafbe58f5fbbf60de71730e",
+  "F087": 8,
+  "F089": "11 MB (Consistent)",
+  "F090": "f115b474",
+  "F091": "012a4f28",
+  "F092": "e3b0c44298fc1c149afbf4c8996fb924",
+  "F094": "Unknown / ADB",
+  "F095": "No (Unknown / ADB)",
+  "F096": "Install: true, Update: true",
+  "F097": "/data/app/~~EXAMPLE=...",
+  "F098": [
+   "/data/user/0/com.example.demo",
+   0
+  ],
+  "F099": [
+   "Standard directory",
+   0
+  ],
+  "F100": "0 split APKs",
+  "F101": "v1",
+  "F102": "UID 10454 (Standard App UID)",
+  "F104": "Clean",
+  "F105": "Clean",
+  "F106": "Primary app instance",
+  "F107": "Personal Profile",
+  "F108": [
+   "Clean",
+   0
+  ],
+  "F109": [
+   false,
+   0
+  ],
+  "F110": 0,
+  "F111": 0,
+  "F112": "2 levels",
+  "F113": [
+   "Clean",
+   0
+  ],
+  "F114": "Clean",
+  "F115": 0,
+  "F116": 0,
+  "F117": [
+   "Available",
+   0
+  ],
+  "F118": [
+   "Inactive",
+   0
+  ],
+  "F119": "Enabled (Debug APK)",
+  "F120": false,
+  "F121": [
+   "Disconnected",
+   0
+  ],
+  "F122": "Not running",
+  "F123": "Not running",
+  "F124": [
+   "Clean",
+   0
+  ],
+  "F125": [
+   "Clean",
+   0
+  ],
+  "F126": [
+   "Clean",
+   0
+  ],
+  "F127": [
+   "Clean",
+   0
+  ],
+  "F128": [
+   "Clean",
+   0
+  ],
+  "F129": [
+   "Closed (Clean)",
+   0
+  ],
+  "F130": [
+   "All probe ports closed",
+   0
+  ],
+  "F131": [
+   false,
+   0
+  ],
+  "F132": [
+   "Not found",
+   0
+  ],
+  "F133": "0 memfd regions",
+  "F134": "Clean",
+  "F135": "Clean",
+  "F137": [
+   0,
+   0
+  ],
+  "F138": [
+   "Clean",
+   0
+  ],
+  "F139": [
+   "Clean",
+   0
+  ],
+  "F140": [
+   "Not installed",
+   0
+  ],
+  "F141": [
+   "Clean",
+   0
+  ],
+  "F142": [
+   "Clean",
+   0
+  ],
+  "F143": [
+   "Clean",
+   0
+  ],
+  "F144": "Clean",
+  "F145": "0",
+  "F146": 0,
+  "F147": 0,
+  "F148": 0,
+  "F149": 0,
+  "F150": 0,
+  "F151": 0,
+  "F152": 0,
+  "F153": 0,
+  "F154": 0,
+  "F155": 0,
+  "F156": 0,
+  "F157": 0,
+  "F158": "1 anon rx regions",
+  "F159": 0,
+  "F163": 0,
+  "F166": [
+   0,
+   0
+  ],
+  "F170": "0 foreign frames",
+  "F171": 0,
+  "F176": "3643 regions",
+  "F177": 0.52,
+  "F178": "4 KB",
+  "F179": "0 RWX regions",
+  "F180": "79 deleted mappings",
+  "F181": "748 distinct files",
+  "F182": 2.936,
+  "F184": "0 external .so files",
+  "F185": "0 memfd regions",
+  "F186": "0 regions",
+  "F187": "Standard [vdso]",
+  "F188": "Mode 2 (SECCOMP_MODE_FILTER active)",
+  "F189": 0,
+  "F190": 0,
+  "F191": 0,
+  "F192": "41 threads",
+  "F193": "259524 kB",
+  "F194": 4.713,
+  "F195": "0 unnamed threads",
+  "F196": "None",
+  "F199": 6,
+  "F200": "233 open descriptors",
+  "F201": "0 open sockets",
+  "F202": "0 open pipes",
+  "F203": "27 ashmem descriptors",
+  "F204": "0 (Clean)",
+  "F205": "0 (Protected)",
+  "F206": 1.06,
+  "F207": 1.022,
+  "F208": 1.005,
+  "F209": 4636,
+  "F210": 0.2,
+  "F211": 13958,
+  "F212": 2448,
+  "F213": 260,
+  "F214": 24844,
+  "F215": 209,
+  "F217": 261,
+  "F218": 297135,
+  "F219": 3542,
+  "F220": 2448,
+  "F221": 2339,
+  "F226": 624,
+  "F227": 88,
+  "F228": 52,
+  "F229": 15625,
+  "F230": 0.692,
+  "F231": 0.07073,
+  "F232": 0.05071,
+  "F233": 0.14229,
+  "F234": 2.885,
+  "F235": 4.238,
+  "F236": 2.718,
+  "F237": 0.0405,
+  "F238": 0.1439,
+  "F239": 5.92,
+  "F240": 0,
+  "F241": 0.035202,
+  "F242": 0.022071,
+  "F243": 0.017018,
+  "F244": 0.038685,
+  "F245": 0.2579,
+  "F246": 2,
+  "F247": 1,
+  "F248": 0.023568,
+  "F249": 0.1216,
+  "F250": 39.8,
+  "F251": 0.1023,
+  "F252": 0,
+  "F253": 51.3,
+  "F254": 0.001196,
+  "F255": 44,
+  "F256": "ST",
+  "F258": 0.001,
+  "F267": 51,
+  "F268": 32.8,
+  "F269": false,
+  "F271": 1,
+  "F272": "Gesture permissions present",
+  "F273": 0,
+  "F274": "Not granted",
+  "F276": 0,
+  "F278": [
+   "Enabled",
+   1
+  ],
+  "F279": [
+   "Disabled",
+   0
+  ],
+  "F280": [
+   "Enabled (Wireless debugging)",
+   2
+  ],
+  "F281": "Allowed",
+  "F282": [
+   "Direct Network (No VPN)",
+   0
+  ],
+  "F283": 0,
+  "F284": "3 notification listeners",
+  "F285": "OEM Keyboard",
+  "F351": 0,
+  "F353": 2,
+  "F356": 0,
+  "F360": 0,
+  "F368": true,
+  "battery_temp_c": 32.8
+ },
+ "unknown": [
+  "F034",
+  "F035",
+  "F036",
+  "F048",
+  "F054",
+  "F062",
+  "F072",
+  "F093",
+  "F103",
+  "F136",
+  "F160",
+  "F161",
+  "F162",
+  "F164",
+  "F165",
+  "F167",
+  "F168",
+  "F169",
+  "F172",
+  "F173",
+  "F174",
+  "F175",
+  "F183",
+  "F197",
+  "F198",
+  "F216",
+  "F222",
+  "F223",
+  "F224",
+  "F225",
+  "F257",
+  "F259",
+  "F260",
+  "F261",
+  "F262",
+  "F263",
+  "F264",
+  "F265",
+  "F266",
+  "F270",
+  "F275",
+  "F277",
+  "F352",
+  "F354",
+  "F355",
+  "F357",
+  "F358",
+  "F359",
+  "F361",
+  "F362",
+  "F366",
+  "F367",
+  "F369",
+  "F370"
+ ],
+ "failed_groups": []
+}

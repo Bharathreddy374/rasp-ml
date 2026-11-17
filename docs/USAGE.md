@@ -1,6 +1,6 @@
 # How to use
 
-All commands are for **Windows PowerShell**. Run them from the repository root unless a step says otherwise.
+All commands are for **Windows PowerShell**, run from the repository root unless a step says otherwise.
 
 ## 1. Prerequisites
 
@@ -9,7 +9,7 @@ All commands are for **Windows PowerShell**. Run them from the repository root u
 | Android Studio (bundled JDK in `jbr`) | Build the app | Any recent version |
 | Android SDK + **NDK 28.2.13676358** + **CMake 3.22.1** | Native probe library | Gradle downloads them on the first build if missing |
 | Python 3.11+ | Backend | Tested on 3.14 |
-| PostgreSQL (optional) | Store every assessment | e.g. a free Neon database |
+| PostgreSQL | Stores every session and result | e.g. a free Neon database |
 | A phone on the same Wi-Fi as the laptop | Real-device test | Android 7.0+ (minSdk 24) |
 
 ## 2. Backend
@@ -18,63 +18,49 @@ All commands are for **Windows PowerShell**. Run them from the repository root u
 cd backend
 python -m venv venv
 .\venv\Scripts\python.exe -m pip install -r requirements.txt
-.\venv\Scripts\python.exe train_shadow.py        # trains the ML shadow model into data/ (about 20 s)
+.\venv\Scripts\python.exe train_shadow.py        # trains data/shadow_model.pkl (about 20 s)
 ```
 
-Create `backend/.env` for your settings. **Never commit it**; it is already in `.gitignore`.
+Create `backend/.env` (git-ignored, never commit it):
 
 ```
 DATABASE_URL=postgresql://user:password@host/db?sslmode=require
-ADMIN_TOKEN=choose-a-long-random-secret
 ```
 
-Start the server:
+Start the server (tables are created at startup):
 
 ```powershell
+$env:ADMIN_TOKEN = "choose-a-long-secret"          # enables the admin endpoints; optional
 .\venv\Scripts\python.exe -m uvicorn app:app --host 0.0.0.0 --port 8000
 ```
 
-- API docs: http://localhost:8000/docs
-- Dashboard: http://localhost:8000/
-- The first start downloads Google's attestation roots and revocation list. Set `TRUSTPOC_OFFLINE=1` to skip that, for tests.
+- Health: http://localhost:8000/health · API docs: http://localhost:8000/docs
 - If Windows Firewall asks about Python, allow **Private networks**, or phones cannot reach the server.
+- All settings, the API, the pipeline, the database schema and the model contract are in [BACKEND.md](BACKEND.md).
 
-Run the tests:
+Tests:
 
 ```powershell
-$env:TRUSTPOC_OFFLINE = "1"; .\venv\Scripts\python.exe -m unittest discover -s tests
+.\venv\Scripts\python.exe -m unittest discover -s tests          # 70 tests, no database needed
 ```
-
-### Settings (environment variables)
-
-| Variable | Default | Effect |
-|---|---|---|
-| `DATABASE_URL` | empty | Postgres. Each assessment goes into the `device_assessments` table. Without it, decisions still work and are not stored. |
-| `ADMIN_TOKEN` | empty | Admin endpoints return 403 until set. Send it as the `X-Admin-Token` header. |
-| `DEMO_MODE` | `0` | `1` trusts the simulator's attestation root (for the web demo only). **Never with real devices.** |
-| `ALLOW_UNSIGNED_REPORTS` | `0` | `1` re-enables the legacy unsigned `POST /v1/features` endpoint. |
-| `TRUST_PROXY` | `0` | `1` reads the client IP from `X-Forwarded-For` (behind Render or nginx). |
-| `STRICT_HARDENING` | `0` | `1` requires trusted hardware attestation for login, add_payee and transfer. |
 
 ### `config.json`
 
 ```json
-{
-  "expected_package": ["com.example.demo"],
-  "expected_cert_sha256": ["<sha256 of your signing certificate>"],
-  "release_manifests": [ { "dex_digest": "...", "so_digest": "...", "arsc_crc": "...", "manifest_crc": "...", "assets_digest": "..." } ]
-}
+{ "expected_cert_sha256": ["<sha256 of your signing certificate>"],
+  "release_manifests": [ { "dex_digest": "...", "so_digest": "...", "arsc_crc": "...", "manifest_crc": "...", "assets_digest": "..." } ] }
 ```
 
-- **`expected_cert_sha256`** turns on repackaging detection (F008 / F081). The app reports its digest in `app.cert_sha256`, and the backend shows the attested one in `attestation.signing_digests`. Debug and release keys have different digests, so add both.
-- **`release_manifests`** turns on APK code checks (F084–F092). For each release, generate an entry and paste it in:
+- `expected_cert_sha256` turns on the signing-certificate check. Debug and release keys differ, so add both.
+- `release_manifests` turns on the APK-code check. Generate an entry per release and paste it in:
   ```powershell
   .\venv\Scripts\python.exe tools\apk_manifest.py path\to\app-release.apk --version-code 1
   ```
+- Both empty = both checks off.
 
 ## 3. Android app
 
-Open `android/` in Android Studio and press **Run**. Or build from the command line:
+Open `android/` in Android Studio and press **Run**, or build from the command line:
 
 ```powershell
 cd android
@@ -85,97 +71,71 @@ $env:JAVA_HOME = "C:\Program Files\Android\Android Studio\jbr"
 On the phone:
 
 1. Connect the phone and laptop to the same Wi-Fi. Find the laptop IP with `ipconfig`.
-2. Open the app. It scans automatically and lists all 370 signals with their status. Grey **NOT IMPLEMENTED** rows are sent as unknown.
-3. Tap **Send to API**, enter the **full collector URL** (e.g. `https://collector.example.com/collect`), then tap **Send payload**. The app rescans and POSTs the `rasp_collect_v2` payload as plain JSON (see [PAYLOAD.md §11](PAYLOAD.md#11-rasp_collect_v2-collector-format)).
-4. The card shows the HTTP status, payload size and the collector's reply. If the reply uses this backend's decision format, it also shows the trust level and reasons.
-5. **Copy JSON** and **Share** produce the same `rasp_collect_v2` payload, so you can inspect it.
+2. Open the app. It scans and lists all 370 signals with their status. Grey **NOT IMPLEMENTED** rows are sent as unknown.
+3. Tap **Send to API**, enter the **full collector URL**, e.g. `http://192.168.1.5:8000/v1/collect` (the emulator reaches the laptop at `http://10.0.2.2:8000/v1/collect`), then tap **Send payload**. The URL is remembered.
+4. The card shows the trust level and outcome, the **risk score (0–100) as a bar**, rules and ML levels, a one-line model summary, the signal counts (from the device, unknown, computed on the server), the reasons and the session id.
+5. **Copy JSON** and **Share** produce the same payload ([PAYLOAD.md](PAYLOAD.md)).
 
-The signed schema-2 flow to this repo's backend (`/v2/assess`) is still in the code (`BackendApiClient.assess()`), but the dialog no longer calls it.
+Launch the app from the home screen, **not with the debugger attached**. A debugger is real instrumentation and gives Level 4.
 
-Launch the app from the home screen, **not with the debugger attached**. An attached debugger is real instrumentation and gives Level 4.
+Expected on a genuine phone: **Level 3, step-up** with developer options or USB / wireless debugging on, and Level 1–2 with them off.
 
-Expected on a genuine phone with developer options and USB debugging on: **Level 3, step-up**. With both off: Level 1–2.
+## 4. See what was stored
 
-## 4. What the app sends
+With `ADMIN_TOKEN` set:
 
-1. `POST /v1/nonce {install_id, action}` returns a one-time nonce (60 s, bound to this install and action).
-2. The app creates a TEE key with that nonce as its attestation challenge, rescans, and signs the payload.
-3. `POST /v2/assess` (gzip) sends `{payload, signature, chain}`.
-
-The signed payload:
-
-```json
-{
-  "schema": 2, "install_id": "i_…", "action": "login", "nonce": "…", "counter": 7, "ts": 1794847441000, "scan_ms": 2082,
-  "app":    { "package": "com.example.demo", "version_code": 1, "cert_sha256": ["87a3…"] },
-  "device": { "manufacturer": "…", "model": "…", "release": "16", "sdk_int": 36, "security_patch": "…", "fingerprint": "…" },
-  "signals": { "F031": ["Enforcing", 0], "F146": [0, 0], "F206": [1.014, 1], "F231": [0.029, 0] },
-  "unknown": ["F034", "…"],
-  "failed_groups": []
-}
+```powershell
+$h = @{ "X-Admin-Token" = "choose-a-long-secret" }
+Invoke-RestMethod http://localhost:8000/v1/sessions?limit=5 -Headers $h                 # latest sessions
+Invoke-RestMethod "http://localhost:8000/v1/sessions?min_level=4" -Headers $h           # only risky ones
+Invoke-RestMethod http://localhost:8000/v1/sessions/<id> -Headers $h                    # payload + retrievals + result
+Invoke-RestMethod http://localhost:8000/v1/model -Headers $h                            # model card
 ```
 
-- Each signal is `[typed value, risk]`. The risk is the probe's own verdict: 0 SAFE, 1 INFO, 2 SUSPICIOUS, 3 ALERT.
-- Not sent:
-  - attestation rows (the certificate chain is sent instead);
-  - server-side rows F286–F350 (the backend computes them);
-  - names and descriptions;
-  - raw sensor samples.
-- Size is about 6 KB, 4–5 KB gzipped.
-
-Before trusting any signal, the backend checks:
-1. The nonce: unknown or reused means replay → Level 5.
-2. The chain leads to Google's roots and is not revoked.
-3. The signature matches the payload bytes → otherwise Level 5.
-4. The counter has gone up.
-
-See [PAYLOAD.md](PAYLOAD.md) for the full wire specification (fields, encoding, signing, response, errors) and [FEATURES.md](FEATURES.md) for every signal.
+Or query the tables directly: `collect_sessions`, `session_retrievals`, `session_results` ([BACKEND.md §8](BACKEND.md#8--persist-storepy-and-dbschemasql)).
 
 ## 5. Attack test: rooted emulator + Frida
 
 This shows that detection works, not just that genuine phones pass.
 
-1. **Create a rootable emulator.** Use a **Google APIs** system image, not "Google Play" (Play images do not allow `adb root`). Install it through Android Studio → SDK Manager, and create a device with it.
-2. **Start the emulator** and install the app:
+1. **Create a rootable emulator** with a **Google APIs** system image, not "Google Play" (Play images do not allow `adb root`). Install it in Android Studio → SDK Manager.
+2. **Start it**, get root and install the app:
    ```powershell
    $adb = "$env:LOCALAPPDATA\Android\Sdk\platform-tools\adb.exe"
    & $adb -s emulator-5554 root
    & $adb -s emulator-5554 install -r android\app\build\outputs\apk\debug\app-debug.apk
    ```
-3. **Baseline:** assess from the app (address `http://10.0.2.2:8000`). Expected: Level 5 with `EM_EMULATOR` (software attestation, untrusted root, zero-noise sensors, debuggable build).
-4. **Add Frida.** Download `frida-server` and `frida-inject` for `android-x86_64` from https://github.com/frida/frida/releases and decompress the `.xz` files. Then push them with the test script:
+3. **Baseline:** send from the app (`http://10.0.2.2:8000/v1/collect`). Expected: Level 5 with `EM_EMULATOR` and `DV_DANGEROUS_PROPS` (debuggable build, zero-noise sensors).
+4. **Add Frida.** Download `frida-server` and `frida-inject` for `android-x86_64` from https://github.com/frida/frida/releases, decompress the `.xz` files, and push them with the test script:
    ```powershell
    & $adb -s emulator-5554 push frida-server /data/local/tmp/
    & $adb -s emulator-5554 push frida-inject /data/local/tmp/
    & $adb -s emulator-5554 push backend\tools\frida\hide_root.js /data/local/tmp/
    & $adb -s emulator-5554 shell "chmod 755 /data/local/tmp/frida-*; /data/local/tmp/frida-server -D"
    ```
-5. **Inject the root-hiding hook** into the running app, then assess again:
+5. **Inject the root-hiding hook** into the running app, then send again:
    ```powershell
    $p = (& $adb -s emulator-5554 shell pidof com.example.demo).Trim()
    & $adb -s emulator-5554 shell "/data/local/tmp/frida-inject -p $p -s /data/local/tmp/hide_root.js -e"
    ```
-   Expected: Level 5 with `RT_FRIDA` and `RT_CODE_PATCHED`. F146/F148–F150 show patched bytes on exactly the hooked functions, and F131 shows the Frida handshake.
-
-If Windows application-control policy blocks Frida's Windows tools, this device-only method (`frida-inject`) still works.
+   Expected: Level 5 with `RT_FRIDA` and `RT_CODE_PATCHED`. F146 / F148–F150 show patched bytes on exactly the hooked functions, and F131 shows the Frida handshake.
 
 ## 6. Troubleshooting
 
 | Symptom | Cause / fix |
 |---|---|
 | `Connection error` in the app | Wrong IP, different Wi-Fi, or the firewall is blocking port 8000 |
-| Level 5 `AP_PACKAGE_MISMATCH` | `expected_package` in `config.json` doesn't match the app's package |
-| Level 5 `AT_NONCE_INVALID` | Request replayed, or more than 60 s between the nonce and the send |
+| Server won't start: `DATABASE_URL is not set` | Create `backend/.env`, or set `STORE=memory` for a throwaway run |
+| `503 storage unavailable` | Database unreachable. Nothing was stored; the app can send again. |
+| `422` with a field list | The payload does not match [PAYLOAD.md](PAYLOAD.md); the list names each field |
 | Level 4 `RT_TRACER_ATTACHED` | App started from Android Studio's debugger |
-| Level 2 `AT_NO_ATTESTATION` | Device could not create an attested key (very old or broken keystore) |
-| ML level `null`, "degraded" | `data/shadow_model.pkl` missing. Run `train_shadow.py`. |
+| `ml_status: unavailable` | No model file. Run `train_shadow.py`. |
+| `ml_status: insufficient_features` | Fewer than 60 % of the model's 25 features were present |
 | Many "Unknown" rows | Expected: native ART checks, touch capture, Play Integrity and per-model baselines are not built yet ([FEATURES.md](FEATURES.md)) |
 
 ## 7. Production gaps
 
-- **ML:** trained on **synthetic data**. Collect real sessions first, retrain, and only then let ML raise levels.
-- **History store:** in-memory. Move it to Redis or Postgres for restarts and multiple instances.
-- **Play Integrity (F011–F015):** not integrated.
-- **TLS:** release builds disallow cleartext. Put the backend behind HTTPS.
-- **`/v1/decisions` and the dashboard:** not authenticated. Protect them before exposing the server.
-- **Unknown signals:** 57 remain; see [FEATURES.md](FEATURES.md).
+- **The payload is unsigned.** Use HTTPS and set `COLLECT_API_KEY` (the app does not send it yet).
+- **The ML model is trained on synthetic data.** Collect real sessions, then retrain.
+- **No rate limiting** (add it at the proxy).
+- **57 signals are still unknown on the device**, and the server computes only the ones it has data for; see [FEATURES.md](FEATURES.md) and [BACKEND.md](BACKEND.md#5-limits-and-decisions).

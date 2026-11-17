@@ -1,4 +1,4 @@
 {
-  "expected_package": ["com.example.demo"],
-  "expected_cert_sha256": []
+  "expected_cert_sha256": [],
+  "release_manifests": []
 }

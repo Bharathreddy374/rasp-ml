@@ -30,6 +30,10 @@ data class ModelResult(
     val serverSignals: JSONObject?,
     val coverage: JSONObject?,
     val serverMs: Double,
+    /** Risk score 0 (no risk) - 100 (critical), always inside the band of [level]. */
+    val riskScore: Int? = null,
+    /** One line from the model: anomaly percentile and the strongest threat head. */
+    val modelSummary: String? = null,
 )
 
 data class ApiResponse(
@@ -229,27 +233,51 @@ object BackendApiClient {
 
     private fun b64(bytes: ByteArray): String = Base64.encodeToString(bytes, Base64.NO_WRAP)
 
+    /**
+     * Reads the collector's answer to POST /v1/collect:
+     * { id, decision: {level, label, outcome, rules_level, ml_level, reasons[]},
+     *   model: {...}, retrieved: {server_signals, ...}, coverage: {...}, timings_ms: {total} }
+     * Returns null for any other shape (a different collector), and the raw reply is shown instead.
+     */
     private fun parseResult(text: String): ModelResult? = try {
         val json = JSONObject(text)
+        val d = json.getJSONObject("decision")
         val reasons = mutableListOf<Reason>()
-        json.optJSONArray("reasons")?.let { arr ->
+        d.optJSONArray("reasons")?.let { arr ->
             for (i in 0 until arr.length()) {
                 val r = arr.optJSONObject(i) ?: continue
                 reasons.add(Reason(r.optString("code"), r.optString("tier"), r.optString("text")))
             }
         }
+        val serverSignals = json.optJSONObject("retrieved")?.optJSONObject("server_signals")
+        val cov = json.optJSONObject("coverage")
+        val model = json.optJSONObject("model")
+        val modelSummary = model?.let { m ->
+            if (m.optString("status") != "scored") "Model: ${m.optString("status").replace('_', ' ')}"
+            else {
+                val top = m.optString("top_head")
+                val prob = m.optJSONObject("heads")?.optDouble(top, 0.0) ?: 0.0
+                "Model: anomaly p${m.optDouble("anomaly_pct", 0.0).toInt()} · top threat " +
+                    "${top.replace('_', ' ')} ${(prob * 100).toInt()}% · coverage ${(m.optDouble("feature_coverage", 0.0) * 100).toInt()}%"
+            }
+        }
         ModelResult(
-            level = json.optInt("trust_level", 0),
-            label = json.optString("label", "UNKNOWN"),
-            outcome = json.optString("outcome", ""),
-            rulesLevel = json.optInt("rules_level", 0),
-            mlLevel = if (json.isNull("ml_level")) null else json.optInt("ml_level"),
+            level = d.getInt("level"),
+            label = d.optString("label", "UNKNOWN"),
+            outcome = d.optString("outcome", ""),
+            rulesLevel = d.optInt("rules_level", 0),
+            mlLevel = if (d.isNull("ml_level")) null else d.optInt("ml_level"),
             reasons = reasons,
-            decisionId = json.optString("decision_id", ""),
-            attestation = json.optJSONObject("attestation"),
-            serverSignals = json.optJSONObject("server_signals"),
-            coverage = json.optJSONObject("coverage"),
-            serverMs = json.optDouble("server_ms", 0.0),
+            decisionId = json.optString("id", ""),
+            attestation = null,
+            serverSignals = serverSignals,
+            coverage = JSONObject()
+                .put("device_signals", cov?.optInt("signals_received") ?: 0)
+                .put("unknown", cov?.optInt("unknown_reported") ?: 0)
+                .put("server_signals", serverSignals?.length() ?: 0),
+            serverMs = json.optJSONObject("timings_ms")?.optDouble("total", 0.0) ?: 0.0,
+            riskScore = if (d.isNull("risk_score")) null else d.optInt("risk_score"),
+            modelSummary = modelSummary,
         )
     } catch (_: Exception) {
         null

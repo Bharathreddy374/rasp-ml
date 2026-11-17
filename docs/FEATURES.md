@@ -7,6 +7,8 @@ The system collects **370 signals** (F001–F370) in 12 groups. This page has tw
 
 Status is taken from a **real scan of a genuine phone** (vivo I2221, Android 16), together with the code. All counts below are from that scan.
 
+> **Current flow (`rasp_collect_v2`, see [BACKEND.md](BACKEND.md)).** The collector payload is not signed or attested, so **F001–F015 are not sent or verified** today; the attestation descriptions below apply to the archived signed flow ([archive/SIGNED_SCHEMA2.md](archive/SIGNED_SCHEMA2.md)). Of the backend-side signals, the server now computes **F081, F088, F299, F304, F305, F306, F309, F312, F314, F315, F329, F330–F332 and F339** from the request, each install's stored history and `config.json`. The other rows marked "Backend" are not computed yet. A rule's "Feeds rules" column shows whether a signal reaches the rules or the model.
+
 | Status | Count | Meaning |
 |---|---|---|
 | Measured | 232 | Collected on the phone and sent typed in the signed payload. 23 of these come from the native library `libtrustprobe`. |

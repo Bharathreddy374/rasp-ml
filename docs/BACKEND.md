@@ -1,0 +1,233 @@
+# Backend
+
+One job: **receive a `rasp_collect_v2` payload from the app, work out what it means, store everything, and return a decision.**
+
+```
+POST /v1/collect
+   │
+   ├─ 1 validate     schema.py        shape, types, sizes. Bad request → 422 with the exact field.
+   ├─ 2 de-duplicate pipeline.py      (install_id, session_id) already stored? → return the stored result
+   ├─ 3 normalise    normalize.py     signals → the named probes the rules and the model use
+   ├─ 4 retrieve     retrieval.py     facts the phone cannot supply: request, history from the DB, config checks
+   ├─ 5 rules        rules.py         evidence tiers → rules level 1-5
+   ├─ 6 model        scoring.py       25 features → ML level, probabilities, explanation
+   ├─ 7 decide       pipeline.py      final level, label, allow / step_up / block for the action
+   ├─ 8 persist      store.py         session + retrievals + result, ONE statement (all or nothing)
+   └─ 9 respond      pipeline.render  same shape for a new call, a retry, and GET /v1/sessions/{id}
+```
+
+Each stage is one module with one responsibility. Nothing in `api.py` (HTTP, auth, limits) knows how a decision is made, and nothing in the pipeline knows about HTTP.
+
+> **Assurance.** The collector payload is not signed or attested, so every decision carries `"assurance": "unverified"`.
+> Level 1 means *"the data this device reported shows nothing wrong"*, not *"this device is proven genuine"*. A forged payload can say anything.
+> The earlier signed and attested flow is archived in [archive/SIGNED_SCHEMA2.md](archive/SIGNED_SCHEMA2.md) (code: git commit `dd44271`).
+
+## 1. API
+
+| Endpoint | Auth | Purpose |
+|---|---|---|
+| `GET /health` | none | Liveness: database reachable, model loaded. `503` if the database is down. |
+| `POST /v1/collect` | `X-Api-Key` if `COLLECT_API_KEY` is set | The one write path: payload in, decision out. |
+| `GET /v1/sessions/{id}` | `X-Admin-Token` | One stored session: what the phone sent, what was retrieved, what was decided. |
+| `GET /v1/sessions` | `X-Admin-Token` | List: `?install_id=`, `?min_level=4`, `?limit=50`. |
+| `GET /v1/model` | `X-Admin-Token` | Model card: features, thresholds, evaluation, mode. |
+
+Admin endpoints answer **403** until `ADMIN_TOKEN` is set. Interactive docs: `/docs`.
+
+Removed in this version, because nothing in the new flow uses them: `/v1/nonce`, `/v2/assess`, `/v1/assess`, `/v1/predict`, `/v1/features` (both methods), `/v1/bank/check`, `/v1/public-key`, `/v1/decisions`, `/v1/demo*`, `/v1/admin/*`, `/v1/ml/report`, the dashboard and the web demo.
+
+### `POST /v1/collect`
+
+Request: the payload from [PAYLOAD.md](PAYLOAD.md), `Content-Type: application/json`, at most `MAX_BODY_KB` (256).
+
+| Status | Meaning |
+|---|---|
+| `200` | Decision returned and stored. `duplicate: true` means this session was already stored; the stored decision is returned and nothing new is written. |
+| `401` | `COLLECT_API_KEY` is set and `X-Api-Key` is missing or wrong |
+| `413` | Body too large |
+| `422` | Payload invalid. `detail` is a list of `{field, problem}` |
+| `503` | The database is unavailable. **Nothing was stored; retry with the same `session_id`.** |
+
+Response:
+
+```json
+{
+  "id": "f54a721a-173c-4068-afbf-a4103acc4ed6",
+  "install_id": "i_548295d7…", "session_id": "session-8ade2307-…",
+  "received_at": "2026-11-17T18:55:20+00:00",
+  "duplicate": false,
+
+  "decision": {
+    "level": 3, "risk_score": 54, "score_basis": {"band": [40, 59], "position": 0.76, "from": "model"},
+    "label": "SUSPICIOUS", "outcome": "step_up", "action": "transfer",
+    "assurance": "unverified",
+    "rules_level": 3, "ml_level": 1, "ml_mode": "enforce",
+    "reasons": [
+      {"code": "CX_DEVELOPER_OPTIONS", "tier": "C", "text": "Developer options enabled."},
+      {"code": "CX_ADB_ENABLED",       "tier": "C", "text": "USB or wireless debugging enabled."}
+    ]
+  },
+
+  "model": {
+    "status": "scored", "version": "shadow-20261118-0017", "trained_on": "synthetic",
+    "feature_coverage": 0.92, "missing_features": ["probe_total_ms", "probe_max_ms"],
+    "anomaly_pct": 88.0, "top_head": "app_tamper_clone", "agreement": "agree",
+    "heads": {"hidden_root": 0.001, "instrumentation": 0.001, "emulator_virtual": 0.0, "app_tamper_clone": 0.021},
+    "explanation": [], "features": {"sensor_count": 44.0, "ctx_adb_enabled": 1.0, "probe_total_ms": null}
+  },
+
+  "retrieved": {
+    "server_signals": {"F299": true, "F304": 1, "F329": 203, "F330": 3, "F339": 1},
+    "history": {"sessions_seen": 1, "first_seen": "…", "last_level": 3, "clock_skew_s": 2.6},
+    "checks": {"release_manifest": null, "signing_cert": null}
+  },
+
+  "coverage": {"signals_received": 230, "unknown_reported": 54, "used_by_rules_and_model": 80,
+               "undecidable": [], "unmapped_alerts": [], "probes_built": ["…"]},
+  "timings_ms": {"normalize": 1.1, "retrieve": 159, "rules": 0.1, "model": 29, "persist": 165, "total": 520}
+}
+```
+
+## 2. Stage by stage
+
+### 1 · Validate: [schema.py](../backend/trustpoc/schema.py)
+Strict on shape and size, tolerant on content. Required: `schema == "rasp_collect_v2"`, `action` (one of the five), `context_keys.install_id/session_id`, `device.*`, `app.version_code`, `signals`.
+- A signal is a bare value or `[value, risk]` with risk 0–3. IDs look like `F016`; `battery_temp_c` is the one allowed extra key.
+- A signal cannot be both measured and listed in `unknown`.
+- `scan_timestamp` must be ISO-8601 **with** a UTC offset.
+- Unknown extra top-level fields are ignored, so a newer app does not break this server.
+- **NUL characters are removed** from all text. Android's `/proc/self/attr/current` ends with one, and PostgreSQL rejects NUL in JSON. This was found with a real phone payload.
+
+### 3 · Normalise: [normalize.py](../backend/trustpoc/normalize.py)
+The only place that interprets signal values. Two shapes arrive:
+
+| Shape | Example | How it is read |
+|---|---|---|
+| Pair | `"F124": ["Clean", 0]` | The device's own **risk** decides. The text is never parsed. |
+| Bare | `"F146": 0`, `"F016": "0"`, `"F078": false` | Meaning is fixed **per signal**: a count > 0, `ro.debuggable == "1"`, `ro.secure == "0"`, a flag, exactly-zero sensor noise, … |
+
+- A signal whose meaning cannot be decided (a text where a number was expected) goes to `coverage.undecidable` and is treated as **missing**, never as clean.
+- Missing, `unknown` and undecidable signals do not become probes; the model sees them as NaN.
+- Any ALERT-risk signal that no rule uses is listed in `unmapped_alerts` and counts as context (Tier C).
+
+### 4 · Retrieve: [retrieval.py](../backend/trustpoc/retrieval.py)
+Facts the phone cannot supply. All catalogue IDs match [FEATURES.md](FEATURES.md). One database round trip.
+
+| Source | Signals computed |
+|---|---|
+| **Request** | F299 User-Agent vs the device model and Android version · F339 installs from the same /24 network in 24 h · clock skew (`CX_CLOCK_SKEW` if > 30 min) |
+| **History**: this install's earlier sessions in the database | F329 time since first seen · F304 IP changes in 30 min · F305 request timing regularity · F306 patch level regressed · F309 fingerprint changed · F312 OS downgrade · F314 SDK changed · F315 app version regressed · F330 max level (30 d) · F331 level ≥ 4 count · F332 rule hits |
+| **Checks** against `config.json` | release manifest (F084–F092 → F088) · signing certificate (F076 → F081; a 16+ character prefix is accepted) |
+
+Regressions raise Tier C reasons (`HS_PATCH_REGRESSED`, `HS_OS_DOWNGRADE`, `HS_APP_VERSION_REGRESSED`). A manifest or certificate mismatch is Tier B (`AP_CODE_MISMATCH`, `AP_CERT_MISMATCH`).
+
+**Not computed, and not invented:** GeoIP / ASN, TLS fingerprints, account and payee velocity, the device graph (F286–F303, F307/F308, F316–F328, F333–F350). They need data this service does not have.
+
+### 5 · Rules: [rules.py](../backend/trustpoc/rules.py)
+| Tier | Meaning | Effect |
+|---|---|---|
+| B | Strong evidence, grouped in **families**: root · instrumentation · virtual · app | 2 families → Level 5 · 1 family → Level 4 |
+| C | Context: developer settings, VPN, accessibility, history regressions, unmapped alerts, clock skew | developer class or 2+ → Level 3 · 1 → Level 2 |
+| none | | Level 1 |
+
+There is no Tier A here: cryptographic proof needs a signed payload.
+
+### 6 · Model: [scoring.py](../backend/trustpoc/scoring.py)
+An explicit contract for the ML layer:
+
+| | |
+|---|---|
+| **Input** | Exactly 25 features, in `features.FEATURES` order (root, hooking, emulator, app, context, probe health) |
+| **Missing** | A probe that is absent becomes **NaN**, never 0 |
+| **Coverage** | Share of the 25 features present. Below **0.6** the model is **not run** (`insufficient_features`). |
+| **Output** | `ml_level` 1–5, four head probabilities (hidden root, instrumentation, emulator/virtual, app tamper/clone), anomaly percentile, top contributing features, and the exact feature vector |
+| **Status** | `scored` · `insufficient_features` · `unavailable` (no model file) · `error` (model raised) |
+| **Mode** | `ML_MODE=enforce` (default): final = `max(rules, ML)`. The model can raise risk, never lower what rules found. `ML_MODE=shadow`: the model is scored and stored; rules alone decide. |
+
+**Risk score (0 = no risk, 100 = critical).** Every decision also gets a single number, which the app shows as a bar. It can never contradict the level, because each level owns a fixed band:
+
+| Level | 1 | 2 | 3 | 4 | 5 |
+|---|---|---|---|---|---|
+| Score band | 0–19 | 20–39 | 40–59 | 60–79 | 80–100 |
+
+Where the score falls inside the band comes from the model: the larger of the highest threat-head probability and the anomaly percentile above the median, `(pct − 50) / 50`. Without a scored model the score is the middle of the band. `score_basis` in the response says which applied. Example: the genuine phone is Level 3, anomaly p88 → position 0.76 → **54**.
+
+The score is stored in `session_results.risk_score` and listed by `GET /v1/sessions`. Like the ML level, its position inside the band is only as good as the model, which is trained on synthetic data.
+
+For the current app, 23 of 25 features are present: `probe_total_ms` and `probe_max_ms` are never sent, because the app does not time each probe. They stay NaN (coverage 0.92).
+
+> **The model is trained on synthetic data.** Its scores validate the pipeline; they are not measured accuracy.
+> Everything needed to retrain on real data is stored: `session_results.features`.
+> `python train_shadow.py` reads the stored vectors of sessions the rules scored Level 1–2 and adds them as negatives.
+> Those are **pseudo-labels** ("no indicators found"), not verified-clean devices. A hidden attack the rules miss would be learned as normal. Use independently verified labels (attack lab, confirmed fraud) before trusting the result.
+
+### 8 · Persist: [store.py](../backend/trustpoc/store.py) and [db/schema.sql](../backend/db/schema.sql)
+One request writes one row to each table, **in a single SQL statement**, so a session is stored completely or not at all.
+
+| Table | Holds |
+|---|---|
+| `collect_sessions` | What the phone sent (`signals`, `unknown`, `failed_groups`, `device`, `app`) plus request metadata: `client_ip`, `net24`, `user_agent`, `received_at` (server clock), `scan_time` (phone clock). **Unique on `(install_id, session_id)`.** |
+| `session_retrievals` | What the server looked up: `server_signals`, `history` summary, `checks`, `retrieval_ms` |
+| `session_results` | The outcome: `rules_level`, `ml_level`, `final_level`, `risk_score`, `label`, `outcome`, `assurance`, `ml_mode`, `ml_status`, `model_version`, `model_data`, `feature_coverage`, `reasons`, `features` (the exact vector, `null` = missing), `ml` (probabilities, anomaly, explanation), `coverage`, `timings_ms` |
+
+Properties:
+- **Idempotent:** the unique key means a retry never creates a second row. The retry returns the stored decision.
+- **Fail loud:** if the database is down, the call returns 503 and stores nothing. The client retries safely.
+- **Fast:** pooled autocommit connections and one round trip per step. About **0.5 s** per request against a remote Neon database (find 160 ms, retrieve 160 ms, persist 165 ms, model 30 ms).
+- Tables are created at startup (`CREATE … IF NOT EXISTS`). The older tables `feature_reports`, `feature_model_results` and `device_assessments` are left untouched.
+
+## 3. Configuration
+
+Environment variables (a `backend/.env` file is loaded if present; it is git-ignored).
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `DATABASE_URL` | required | PostgreSQL URL. Without it the server refuses to start (unless `STORE=memory`). |
+| `DB_SCHEMA` | `public` | Schema for the tables |
+| `STORE` | `postgres` | `memory` = throwaway development run, lost on restart |
+| `ADMIN_TOKEN` | empty | Enables the three admin endpoints (`X-Admin-Token`) |
+| `COLLECT_API_KEY` | empty | If set, `POST /v1/collect` requires `X-Api-Key`. **The app does not send this header yet.** |
+| `ML_MODE` | `enforce` | `enforce` or `shadow` |
+| `TRUST_PROXY` | `0` | `1` reads the client IP from `X-Forwarded-For` (behind Render, nginx) |
+| `MAX_BODY_KB` | `256` | Request size limit |
+
+`backend/config.json`: `expected_cert_sha256` (list of release-certificate SHA-256 digests) and `release_manifests` (entries from `tools/apk_manifest.py`). Both empty = the checks are off.
+
+## 4. Run and test
+
+```powershell
+cd backend
+python -m venv venv; .\venv\Scripts\python.exe -m pip install -r requirements.txt
+.\venv\Scripts\python.exe train_shadow.py                      # trains data/shadow_model.pkl (about 20 s)
+$env:ADMIN_TOKEN = "choose-a-long-secret"
+.\venv\Scripts\python.exe -m uvicorn app:app --host 0.0.0.0 --port 8000
+```
+
+```powershell
+.\venv\Scripts\python.exe -m unittest discover -s tests         # 70 tests, no database needed
+```
+
+The database tests run only when `TEST_DATABASE_URL` is set. They create a throwaway schema `rasp_test_<random>`, run the whole pipeline through it, and drop it afterwards:
+
+```powershell
+$env:TEST_DATABASE_URL = "postgresql://user:pass@host/db?sslmode=require"
+.\venv\Scripts\python.exe -m unittest tests.test_postgres -v    # 8 tests
+```
+
+Try it with the real payload:
+
+```powershell
+curl.exe -X POST http://localhost:8000/v1/collect -H "Content-Type: application/json" --data-binary "@backend/tests/fixtures/genuine_phone.json"
+```
+
+## 5. Limits and decisions
+
+| | |
+|---|---|
+| Unsigned payload | Anyone who can reach the endpoint can submit data. Use `COLLECT_API_KEY` and HTTPS in production; the app does not send the key yet. |
+| Unverified assurance | A forged payload can claim a clean device. Level 1 is not proof. |
+| Synthetic model | Scores validate the pipeline only (see stage 6). |
+| Pseudo-labels for retraining | Rules-based negatives can teach the model the rules' blind spots. |
+| History is per `install_id` | A reinstall creates a new install, so history starts again. |
+| No rate limiting | Add it at the proxy. |
+| Connection pool | Four idle connections per process; fine for one instance, size it for more. |

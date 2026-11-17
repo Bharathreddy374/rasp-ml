@@ -2,8 +2,8 @@
 
   python train_shadow.py
 
-Training data = SYNTHETIC sessions (trustpoc/synth.py) plus any real sessions the
-server logged in data/sessions.jsonl that the rules scored Level 1-2 (used as
+Training data = SYNTHETIC sessions (trustpoc/synth.py) plus, when DATABASE_URL is set, the feature
+vectors of stored real sessions that the rules scored Level 1-2 (used as
 low-risk negatives only). The report is a pipeline check, not an accuracy claim.
 """
 import json
@@ -25,17 +25,28 @@ FPR_BUDGET = 0.001  # 0.1% of genuine sessions, the design target
 
 
 def load_real_low_risk():
-    p = DATA / "sessions.jsonl"
-    rows = []
-    if p.exists():
-        for line in p.read_text().splitlines():
-            try:
-                r = json.loads(line)
-            except json.JSONDecodeError:
-                continue
-            if r.get("rules_level", 9) <= 2:
-                rows.append([np.nan if v is None else v for v in r["features"]])
-    return np.array(rows, dtype=float).reshape(-1, len(FEATURES))
+    """Feature vectors of real sessions the rules scored Level 1-2, read from the database.
+
+    These are pseudo-labelled negatives ("no indicators found"), not verified-clean devices, so a
+    hidden attack that the rules miss would be learned as normal. Treat the result as a pipeline
+    check until sessions have independently verified labels (attack lab, confirmed fraud).
+    """
+    import os
+    from dotenv import load_dotenv
+    load_dotenv(BASE / ".env")
+    if not os.environ.get("DATABASE_URL"):
+        print("DATABASE_URL not set: training on synthetic data only")
+        return np.empty((0, len(FEATURES)))
+    from trustpoc.store import PostgresStore, StoreError
+    try:
+        rows = PostgresStore(os.environ["DATABASE_URL"], os.environ.get("DB_SCHEMA", "public")) \
+            .training_features(max_rules_level=2, limit=50000)
+    except StoreError as exc:
+        print(f"could not read sessions ({exc}): training on synthetic data only")
+        return np.empty((0, len(FEATURES)))
+    vectors = [[np.nan if r["features"].get(n) is None else r["features"][n] for n in FEATURES] for r in rows]
+    print(f"read {len(vectors)} real low-risk sessions from the database")
+    return np.array(vectors, dtype=float).reshape(-1, len(FEATURES))
 
 
 def recall_at_fpr(scores_pos, scores_neg, fpr=FPR_BUDGET):
