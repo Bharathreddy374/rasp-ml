@@ -22,6 +22,8 @@ The earlier **signed and attested** format (nonce, hardware key, signature, `POS
     "security_patch": "2026-10-01", "scan_timestamp": "2026-11-17T23:54:56+05:30"
   },
   "app": { "version_code": 1 },
+  "device_context": { "sim_country": "in", "network_country": "in", "timezone": "Asia/Kolkata", "locale": "en-IN",
+                      "network_type": "wifi", "boot_count": 412, "uptime_ms": 86400000, "android_id_hash": "9f2c…64 hex" },
   "signals": {
     "F016": 0,
     "F018": ["release-keys", 0],
@@ -52,6 +54,7 @@ A complete real example (231 signals, 54 unknown) is [../backend/tests/fixtures/
 | `device.security_patch` | string | no | History: patch level regression |
 | `device.scan_timestamp` | string | yes | ISO-8601 **with a UTC offset**. The phone's clock; compared with the server's for skew. |
 | `app.version_code` | int ≥ 0 | yes | History: app version regression |
+| `device_context` | object | no | Facts for server-side signals; every field optional. `sim_country`, `network_country` (ISO 3166 alpha-2), `timezone` (IANA), `locale` (BCP 47, e.g. `en-IN`), `network_type` (`wifi` · `cellular` · `ethernet` · `vpn` · `other` · `none`), `boot_count`, `uptime_ms`, `android_id_hash` (64 hex: SHA-256 of `rasp-ml/android-id/v1:` + `ANDROID_ID`; the raw ID never leaves the phone). Used for F289, F291, F301, F303, F310, F311, F326. |
 | `signals` | object | yes | See §3. Up to 600 entries. |
 | `unknown` | string[] | no | IDs of signals this device could not measure (§4) |
 | `failed_groups` | string[] | no | Probe groups that threw: `attestation`, `device_static`, `app_integrity`, `runtime_hooking`, `memory_procfs`, `timing`, `sensor_touch`, `risky_context`, `server_side`, `probe_health` |

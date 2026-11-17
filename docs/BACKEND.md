@@ -111,17 +111,25 @@ The only place that interprets signal values. Two shapes arrive:
 - Any ALERT-risk signal that no rule uses is listed in `unmapped_alerts` and counts as context (Tier C).
 
 ### 4 · Retrieve: [retrieval.py](../backend/trustpoc/retrieval.py)
-Facts the phone cannot supply. All catalogue IDs match [FEATURES.md](FEATURES.md). One database round trip.
+Computes the 86 catalogue signals the phone never reports. Each one ends up either in `server_signals` or in `not_computed` with the reason, **never silently absent**. All IDs match [FEATURES.md](FEATURES.md). There is **one database round trip** (`store.lookup`): history, per-network / ASN / sensor / Android-ID counts and the device graph come from a single SQL statement.
 
 | Source | Signals computed |
 |---|---|
-| **Request** | F299 User-Agent vs the device model and Android version · F339 installs from the same /24 network in 24 h · clock skew (`CX_CLOCK_SKEW` if > 30 min) |
-| **History**: this install's earlier sessions in the database | F329 time since first seen · F304 IP changes in 30 min · F305 request timing regularity · F306 patch level regressed · F309 fingerprint changed · F312 OS downgrade · F314 SDK changed · F315 app version regressed · F330 max level (30 d) · F331 level ≥ 4 count · F332 rule hits |
-| **Checks** against `config.json` | release manifest (F084–F092 → F088) · signing certificate (F076 → F081; a 16+ character prefix is accepted) |
+| **Request** | F287 IP scope / ASN type · F292 proxy (proxy headers, hosting ASN, device VPN) · F296 JA3 (only from a trusted edge proxy's `X-JA3-Hash`) · F298 header-order hash · F299 User-Agent vs device · F365 payload age (ms) · clock skew |
+| **Geo data** in `backend/data/geo/` (`python tools/update_geo.py`) | F286 ASN · F288 IP country · F293 Tor exit · F294 hosting / data centre · F340 installs on the ASN in 24 h |
+| **`device_context`** (optional block from the app) | F289 IP vs SIM country · F291 IP vs locale country · F301 network type · F303 network-type switches in 24 h · F310 boot count went backwards · F311 uptime drift vs the time between sessions (s) · F326 other installs on this phone in 30 d (hashed Android ID) |
+| **History**: this install's sessions | F304 IP changes in 30 min · F305 request timing regularity · F306 patch regressed · F309 fingerprint changed · F312 OS downgrade · F313 kernel changed · F314 SDK changed · F315 app version regressed · F329 seconds since first seen · F330/F331/F332 level and rule history (30 d) · F333 anomaly trend vs the last 5 sessions · F363 phone clock moved forward |
+| **Network** | F295 share of risky sessions from this /24 in 30 d (raised for Tor and hosting) · F325 new installs on the /24 in 24 h · F339 installs on the /24 in 24 h |
+| **Device graph**: installs linked by a shared /24 or a shared Android ID in 7 days, up to 2 hops | F338 installs with identical sensor hardware · F343/F349 component size · F344 emulator share · F345 new-install share · F347 mean level of the members (0–1) · F348 entity age (days) · F350 farm score = min(1, log2(size)/5) × worst share |
+| **Checks** against `config.json` | release manifest (F084–F092 → F088) · signing certificate (F076 → F081) |
 
-Regressions raise Tier C reasons (`HS_PATCH_REGRESSED`, `HS_OS_DOWNGRADE`, `HS_APP_VERSION_REGRESSED`). A manifest or certificate mismatch is Tier B (`AP_CODE_MISMATCH`, `AP_CERT_MISMATCH`).
+New reasons (all Tier C unless noted): `CX_HOSTING_IP`, `CX_TOR_EXIT`, `CX_PROXY_HEADERS`, `CX_COUNTRY_MISMATCH`, `CX_CLOCK_SKEW`, `HS_PATCH_REGRESSED`, `HS_OS_DOWNGRADE`, `HS_APP_VERSION_REGRESSED`, `HS_BOOT_COUNT_RESET`, `HS_UPTIME_INCONSISTENT` (> 300 s drift), `HS_REINSTALLS` (3+ other installs), `GR_FARM_CLUSTER` (farm score ≥ 0.7). A manifest or certificate mismatch is Tier B (`AP_CODE_MISMATCH`, `AP_CERT_MISMATCH`).
 
-**Not computed, and not invented:** GeoIP / ASN, TLS fingerprints, account and payee velocity, the device graph (F286–F303, F307/F308, F316–F328, F333–F350). They need data this service does not have.
+**Not computed (reason stored per session in `not_computed`):**
+- **Attestation:** F001–F015, F025, F307/F308, F316–F321, F324, F337, F364. These need key attestation, Play Integrity or a signed payload.
+- **Bank data:** F322, F323, F327, F328, F334–F336, F341, F342, F346. These need account, payee or fraud-outcome data.
+- **Edge / infrastructure:** F290 (country-to-timezone table), F297 and F302 (TCP/TLS from an edge proxy), F300 (DNS probe).
+- **Geo:** the geo signals are reported as not computed until the data files are downloaded, and for private IPs.
 
 ### 5 · Rules: [rules.py](../backend/trustpoc/rules.py)
 | Tier | Meaning | Effect |
@@ -166,8 +174,8 @@ One request writes one row to each table, **in a single SQL statement**, so a se
 
 | Table | Holds |
 |---|---|
-| `collect_sessions` | What the phone sent (`signals`, `unknown`, `failed_groups`, `device`, `app`) plus request metadata: `client_ip`, `net24`, `user_agent`, `received_at` (server clock), `scan_time` (phone clock). **Unique on `(install_id, session_id)`.** |
-| `session_retrievals` | What the server looked up: `server_signals`, `history` summary, `checks`, `retrieval_ms` |
+| `collect_sessions` | What the phone sent (`signals`, `unknown`, `failed_groups`, `device`, `app`) plus `device_context` and request metadata: `client_ip`, `net24`, `asn`, `sensor_sig`, `android_id_hash`, `header_hash`, `ja3`, `user_agent`, `received_at` (server clock), `scan_time` (phone clock). **Unique on `(install_id, session_id)`.** |
+| `session_retrievals` | What the server looked up: `server_signals`, `not_computed` (`{signal: reason}`), `history` summary, `checks`, `retrieval_ms` |
 | `session_results` | The outcome: `rules_level`, `ml_level`, `final_level`, `risk_score`, `label`, `outcome`, `assurance`, `ml_mode`, `ml_status`, `model_version`, `model_data`, `feature_coverage`, `reasons`, `features` (the exact vector, `null` = missing), `ml` (probabilities, anomaly, explanation), `coverage`, `timings_ms` |
 
 Properties:

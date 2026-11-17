@@ -23,6 +23,8 @@ import java.util.UUID
  *   "device": { "manufacturer", "model", "android_release", "sdk_int", "fingerprint",
  *               "security_patch", "scan_timestamp" },
  *   "app": { "version_code" },
+ *   "device_context": { "sim_country", "network_country", "timezone", "locale", "network_type",
+ *                       "boot_count", "uptime_ms", "android_id_hash" },     optional, see DeviceContext
  *   "signals": { "F016": 0, "F018": ["release-keys", 0], ..., "battery_temp_c": 28.2 },
  *   "unknown": [ ... ], "failed_groups": [ ... ]
  * }
@@ -79,6 +81,7 @@ object CollectPayload {
                 .put("security_patch", Build.VERSION.SECURITY_PATCH)
                 .put("scan_timestamp", SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ssXXX", Locale.US).format(Date())))
             .put("app", JSONObject().put("version_code", versionCode(context)))
+            .put("device_context", DeviceContext.collect(context))
             .put("signals", signals)
             .put("unknown", unknown)
             .put("failed_groups", JSONArray(summary.failedGroups))

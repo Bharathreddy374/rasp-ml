@@ -88,6 +88,27 @@ class PostgresTest(unittest.TestCase):
         self.assertIn("F330", last["retrieved"]["server_signals"])
         self.assertGreaterEqual(last["retrieved"]["server_signals"]["F339"], 1)
 
+    def test_lookup_matches_the_memory_store(self):
+        """The graph / Android-ID / sensor SQL must agree with MemoryStore's reference implementation."""
+        from trustpoc.store import MemoryStore
+        mem = Pipeline(MemoryStore(), self.pipe.model, {})
+        # a and b share a /24; c is elsewhere but shares b's Android ID -> one component of three
+        steps = [("a", "10.77.1.5", "1" * 64), ("b", "10.77.1.6", "2" * 64), ("c", "10.88.1.5", "2" * 64), ("a", "10.77.1.5", "1" * 64)]
+        for n, (who, ip, aid) in enumerate(steps):
+            p = phone(session_id=f"pg-g{n}", install_id=f"i_pggraph{who * 23}")
+            p["device_context"] = {"boot_count": 5 + n, "uptime_ms": 1000, "network_type": "wifi", "android_id_hash": aid}
+            facts = retrieval.Request(ip, FACTS.user_agent, 5000)
+            payload = CollectPayload.model_validate_json(json.dumps(p))
+            got = self.pipe.run(payload, facts)["retrieved"]["server_signals"]
+            want = mem.run(payload, facts)["retrieved"]["server_signals"]
+            keys = ("F325", "F326", "F339", "F343", "F344", "F345", "F347", "F350", "F310", "F303")
+            self.assertEqual({k: got.get(k) for k in keys}, {k: want.get(k) for k in keys}, f"step {n}")
+        self.assertEqual(got["F343"], 3)
+        rec = self.store.get(self.store.find(f"i_pggraph{'a' * 23}", "pg-g3")["session"]["id"])
+        self.assertEqual(rec["session"]["android_id_hash"], "1" * 64)
+        self.assertEqual(rec["session"]["device_context"]["boot_count"], 8)
+        self.assertIn("F001", rec["retrieved"]["not_computed"])
+
     def test_listing_and_training_export(self):
         self.run_payload(phone(session_id="pg-l1", install_id="i_pg00000000000000000000000000005"))
         rows = self.store.list_sessions("i_pg00000000000000000000000000005", 3, 10)

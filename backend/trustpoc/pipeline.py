@@ -23,8 +23,8 @@ ASSURANCE = "unverified"  # the collector payload is not signed or attested
 
 
 class Pipeline:
-    def __init__(self, store, model: ModelService, config: dict):
-        self.store, self.model, self.config = store, model, config
+    def __init__(self, store, model: ModelService, config: dict, geo=None):
+        self.store, self.model, self.config, self.geo = store, model, config, geo
 
     def run(self, payload: CollectPayload, req: retrieval.Request) -> dict:
         t0 = time.perf_counter()
@@ -50,7 +50,7 @@ class Pipeline:
 
         # 4. retrieve
         retrieved = timed("retrieve", lambda: retrieval.retrieve(
-            self.store, payload, req, scan_time, self.config, now))
+            self.store, self.geo, payload, req, scan_time, self.config, now))
 
         # 5. rules
         def run_rules():
@@ -67,6 +67,7 @@ class Pipeline:
         outcome = timed("model", lambda: self.model.score(norm.probes, rules_level))
 
         # 7. decide
+        retrieval.anomaly_trend(retrieved, outcome.detail.get("anomaly_pct"))   # F333 needs this session's score
         final = self.model.final_level(rules_level, outcome)
         score, score_basis = risk_score(final, outcome)
         reason_list = rules.reasons(ev)
@@ -80,9 +81,9 @@ class Pipeline:
             "user_agent": (req.user_agent or "")[:300], "payload_bytes": req.payload_bytes,
             "app_version": payload.app.version_code, "device": payload.device.model_dump(),
             "app": payload.app.model_dump(), "signals": payload.signals, "unknown": payload.unknown,
-            "failed_groups": payload.failed_groups,
+            "failed_groups": payload.failed_groups, **retrieved.keys,
         }
-        retrieval_row = {"server_signals": retrieved.server_signals, "history": retrieved.history,
+        retrieval_row = {"server_signals": retrieved.server_signals, "not_computed": retrieved.not_computed, "history": retrieved.history,
                          "checks": retrieved.checks, "retrieval_ms": retrieved.retrieval_ms}
         result = {
             "rules_level": rules_level, "ml_level": outcome.level, "final_level": final, "risk_score": score,
@@ -134,7 +135,7 @@ def render(record: dict, duplicate: bool) -> dict:
             "anomaly_pct": ml.get("anomaly_pct"), "heads": ml.get("heads"), "top_head": ml.get("top"),
             "agreement": ml.get("agreement"), "explanation": ml.get("explanation"), "features": x.get("features"),
         },
-        "retrieved": {"server_signals": r.get("server_signals"), "history": r.get("history"), "checks": r.get("checks")},
+        "retrieved": {"server_signals": r.get("server_signals"), "not_computed": r.get("not_computed"), "history": r.get("history"), "checks": r.get("checks")},
         "coverage": x.get("coverage"),
         "timings_ms": x.get("timings_ms"),
     }

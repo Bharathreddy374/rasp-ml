@@ -48,6 +48,14 @@ REASONS = {
     "HS_PATCH_REGRESSED": "Security patch level went backwards for this install.",
     "HS_OS_DOWNGRADE": "Android version went backwards for this install.",
     "HS_APP_VERSION_REGRESSED": "App version went backwards for this install.",
+    "HS_BOOT_COUNT_RESET": "The phone's boot count went backwards since this install's last session.",
+    "HS_UPTIME_INCONSISTENT": "The phone's uptime does not fit the time since this install's last session.",
+    "HS_REINSTALLS": "The app was installed 3 or more times on this phone in 30 days.",
+    "CX_HOSTING_IP": "Request came from a hosting / data-centre network.",
+    "CX_TOR_EXIT": "Request came from a Tor exit node.",
+    "CX_PROXY_HEADERS": "Request carried proxy headers.",
+    "CX_COUNTRY_MISMATCH": "IP country differs from the SIM country.",
+    "GR_FARM_CLUSTER": "This install belongs to a cluster of related installs that looks like a device farm.",
     # ML
     "ML_RISK": "The ML model scored a higher risk than the rules.",
 }

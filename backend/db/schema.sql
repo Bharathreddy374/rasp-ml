@@ -63,3 +63,16 @@ CREATE INDEX IF NOT EXISTS session_results_level_idx ON session_results (final_l
 
 -- Columns added after the first release (existing databases get them here; NULL for older rows).
 ALTER TABLE session_results ADD COLUMN IF NOT EXISTS risk_score SMALLINT;
+
+-- Server-side signal inputs (F286-F350): optional device_context from the app, and keys the
+-- server derives per request so history and graph queries can use indexes.
+ALTER TABLE collect_sessions ADD COLUMN IF NOT EXISTS device_context  JSONB;   -- sim/network country, timezone, locale, network type, boot count, uptime
+ALTER TABLE collect_sessions ADD COLUMN IF NOT EXISTS asn             BIGINT;  -- client IP's autonomous system (needs geo data)
+ALTER TABLE collect_sessions ADD COLUMN IF NOT EXISTS sensor_sig      TEXT;    -- hash of the sensor hardware fingerprint (F338)
+ALTER TABLE collect_sessions ADD COLUMN IF NOT EXISTS android_id_hash TEXT;    -- salted hash from the app; survives reinstalls (F326)
+ALTER TABLE collect_sessions ADD COLUMN IF NOT EXISTS header_hash     TEXT;    -- order of HTTP header names (F298)
+ALTER TABLE collect_sessions ADD COLUMN IF NOT EXISTS ja3             TEXT;    -- TLS fingerprint from a trusted edge proxy (F296)
+ALTER TABLE session_retrievals ADD COLUMN IF NOT EXISTS not_computed JSONB;  -- {signal: reason} for backend signals not computed
+CREATE INDEX IF NOT EXISTS collect_sessions_aid_idx    ON collect_sessions (android_id_hash, received_at DESC);
+CREATE INDEX IF NOT EXISTS collect_sessions_sensor_idx ON collect_sessions (sensor_sig, received_at DESC);
+CREATE INDEX IF NOT EXISTS collect_sessions_asn_idx    ON collect_sessions (asn, received_at DESC);

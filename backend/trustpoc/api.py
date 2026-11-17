@@ -23,7 +23,8 @@ from fastapi.concurrency import run_in_threadpool
 from pydantic import ValidationError
 
 from .pipeline import Pipeline
-from .retrieval import Request as RequestFacts
+from .geo import GeoIP
+from .retrieval import PROXY_HEADERS, Request as RequestFacts
 from .schema import CollectPayload
 from .scoring import ModelService
 from .store import MemoryStore, PostgresStore, Store, StoreError
@@ -75,7 +76,8 @@ def create_app(settings: Settings | None = None, store: Store | None = None,
     s = settings or Settings.from_env()
     store = store or build_store(s)
     model = model or ModelService(s.data_dir, s.ml_mode)
-    pipeline = Pipeline(store, model, load_config(s.config_path))
+    geo = GeoIP(s.data_dir / "geo")
+    pipeline = Pipeline(store, model, load_config(s.config_path), geo)
 
     @asynccontextmanager
     async def lifespan(_app: FastAPI):
@@ -104,7 +106,7 @@ def create_app(settings: Settings | None = None, store: Store | None = None,
     def health():
         db = store.ping()
         body = {"status": "ok" if db else "degraded", "database": "ok" if db else "unreachable",
-                "model": "loaded" if model.models else "missing", "ml_mode": model.mode}
+                "model": "loaded" if model.models else "missing", "ml_mode": model.mode, "geo_data": geo.available}
         if not db:
             raise HTTPException(503, body)
         return body
@@ -121,8 +123,14 @@ def create_app(settings: Settings | None = None, store: Store | None = None,
         except ValidationError as exc:
             raise HTTPException(422, [{"field": ".".join(str(p) for p in e["loc"]), "problem": e["msg"]}
                                       for e in exc.errors(include_url=False, include_context=False, include_input=False)]) from exc
-        facts = RequestFacts(client_ip=client_ip(request), user_agent=request.headers.get("user-agent"),
-                             payload_bytes=len(raw))
+        names = [k.decode("latin-1").lower() for k, _ in request.headers.raw]
+        added_by_proxy = set(PROXY_HEADERS) | {"x-ja3-hash"} if s.trust_proxy else set()
+        facts = RequestFacts(
+            client_ip=client_ip(request), user_agent=request.headers.get("user-agent"), payload_bytes=len(raw),
+            header_names=[n for n in names if n not in added_by_proxy],
+            # behind a trusted proxy its own headers are expected; otherwise they mean the client used a proxy
+            proxy_headers=[] if s.trust_proxy else [n for n in PROXY_HEADERS if n in names],
+            ja3=(request.headers.get("x-ja3-hash") or None) if s.trust_proxy else None)
         try:
             result = await run_in_threadpool(pipeline.run, payload, facts)
         except StoreError as exc:

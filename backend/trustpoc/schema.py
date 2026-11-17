@@ -12,6 +12,8 @@ server.
       "device": {"manufacturer", "model", "android_release", "sdk_int", "fingerprint",
                  "security_patch", "scan_timestamp"},
       "app": {"version_code"},
+      "device_context": {"sim_country", "network_country", "timezone", "locale",       (optional)
+                         "network_type", "boot_count", "uptime_ms", "android_id_hash"},
       "signals": {"F016": 0, "F018": ["release-keys", 0], ..., "battery_temp_c": 32.8},
       "unknown": ["F034", ...],
       "failed_groups": []
@@ -99,6 +101,34 @@ class App(BaseModel):
     version_code: int = Field(ge=0)
 
 
+class DeviceContext(BaseModel):
+    """Optional facts for server-side signals; every field may be missing."""
+    model_config = ConfigDict(extra="ignore")
+
+    sim_country: str | None = Field(default=None, pattern=r"^[a-z]{2}$")
+    network_country: str | None = Field(default=None, pattern=r"^[a-z]{2}$")
+    timezone: str | None = Field(default=None, max_length=64)
+    locale: str | None = Field(default=None, max_length=35)
+    network_type: str | None = Field(default=None, pattern=r"^(wifi|cellular|ethernet|vpn|other|none)$")
+    boot_count: int | None = Field(default=None, ge=0)
+    uptime_ms: int | None = Field(default=None, ge=0)
+    android_id_hash: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
+
+    @field_validator("sim_country", "network_country", mode="before")
+    @classmethod
+    def _empty_is_none(cls, v):
+        return None if v in ("", None) else str(v).lower()
+
+    @property
+    def locale_country(self) -> str | None:
+        """'en-IN' -> 'in'; None when the locale has no region."""
+        if not self.locale:
+            return None
+        parts = self.locale.replace("_", "-").split("-")
+        region = next((p for p in parts[1:] if len(p) == 2 and p.isalpha()), None)
+        return region.lower() if region else None
+
+
 class CollectPayload(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
@@ -107,6 +137,7 @@ class CollectPayload(BaseModel):
     context_keys: ContextKeys
     device: Device
     app: App
+    device_context: DeviceContext | None = None
     signals: dict[str, Any]
     unknown: list[str] = Field(default_factory=list)
     failed_groups: list[str] = Field(default_factory=list)
