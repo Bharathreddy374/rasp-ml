@@ -1,0 +1,406 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Device Trust · ML risk engine</title>
+<style>
+  :root {
+    --ink: #141C2B; --muted: #4B5567; --quiet: #657083; --bg: #F5F6F2; --card: #FCFCFA; --rule: #DDE1DA;
+    --navy: #0F1726; --blue: #2B59D9; --l1: #1E40AF; --l2: #93A9EE; --l3: #D5D9E0; --l4: #F4B183; --l5: #C2410C;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink);
+         font: 15px/1.45 Inter, "Segoe UI", system-ui, -apple-system, sans-serif; }
+  header { background: var(--navy); color: #F2F4F0; padding: 0 32px; display: flex; align-items: center; gap: 20px; height: 64px; }
+  header h1 { font-size: 17px; margin: 0; font-weight: 600; white-space: nowrap; }
+  .motif { display: flex; gap: 6px; } .motif span { width: 12px; height: 12px; border-radius: 3px; }
+  nav { display: flex; gap: 4px; margin-left: 16px; height: 100%; }
+  nav button { background: none; border: 0; border-bottom: 3px solid transparent; color: #B4BFD0; font: inherit; font-weight: 600;
+               padding: 0 14px; cursor: pointer; border-radius: 0; }
+  nav button.on { color: #fff; border-bottom-color: #7FA0FF; }
+  .grow { flex: 1; }
+  .pill { font-size: 12px; font-weight: 600; padding: 4px 10px; border-radius: 999px; background: #1E2A44; color: #B4BFD0; white-space: nowrap; }
+  .pill.live::before { content: ""; display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: #4ADE80; margin-right: 6px; }
+  button { font: inherit; font-size: 13px; font-weight: 600; border: 1px solid var(--rule); background: var(--card); color: var(--ink);
+           padding: 7px 12px; border-radius: 8px; cursor: pointer; }
+  button:hover { border-color: var(--blue); }
+  header > button { background: transparent; border-color: #2A3650; color: #B4BFD0; }
+  .wrap { max-width: 1440px; margin: 0 auto; padding: 24px 32px 48px; }
+  .grid { display: grid; grid-template-columns: minmax(0, 1.35fr) minmax(0, 1fr); gap: 24px; align-items: start; }
+  @media (max-width: 1000px) { .grid { grid-template-columns: 1fr; } nav button { padding: 0 8px; } }
+  .card { background: var(--card); border: 1px solid var(--rule); border-radius: 16px; padding: 24px; }
+  .eyebrow { font-size: 12px; font-weight: 700; letter-spacing: 1.6px; text-transform: uppercase; color: var(--blue); margin: 0 0 12px; }
+  .scen { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-bottom: 20px; }
+  .scen .lbl { font-size: 13px; font-weight: 700; color: var(--quiet); margin-right: 4px; }
+  .hero { display: flex; gap: 24px; align-items: center; }
+  .chip { width: 96px; height: 96px; border-radius: 18px; display: grid; place-items: center; font-size: 48px; font-weight: 700; flex: none; }
+  .chip.sm { width: 36px; height: 36px; border-radius: 8px; font-size: 17px; }
+  .chip.xs { width: 26px; height: 26px; border-radius: 7px; font-size: 13px; display: inline-grid; vertical-align: middle; }
+  .lv1 { background: var(--l1); color: #F7F9FF; } .lv2 { background: var(--l2); color: var(--ink); }
+  .lv3 { background: var(--l3); color: var(--ink); } .lv4 { background: var(--l4); color: var(--ink); }
+  .lv5 { background: var(--l5); color: #F7F9FF; } .lv0 { background: #EEF0EB; color: var(--quiet); }
+  .label { font-size: 28px; font-weight: 700; margin: 0; letter-spacing: -.3px; }
+  .meta { color: var(--muted); margin-top: 4px; }
+  .tag { display: inline-block; margin-top: 10px; margin-right: 6px; font-size: 13px; font-weight: 700; padding: 4px 12px; border-radius: 999px; }
+  .o-allow { background: #E5F4E4; color: #1B5E20; } .o-step_up { background: #F9EEDA; color: #7A4A00; }
+  .o-block { background: #FBEBEB; color: #9B1C1C; } .t-grey { background: #EEF0EB; color: #4B5567; } .t-blue { background: #E7F1FB; color: #1E40AF; }
+  .split { display: flex; gap: 10px; margin-top: 18px; }
+  .split div { flex: 1; background: #EEF0EB; border-radius: 10px; padding: 10px 12px; display: flex; align-items: center; gap: 10px; font-size: 13px; color: var(--muted); }
+  .split b { color: var(--ink); display: block; font-size: 14px; }
+  .section { margin-top: 22px; }
+  .reason { display: flex; gap: 12px; align-items: flex-start; padding: 10px 0; border-top: 1px solid var(--rule); }
+  .tier { font-size: 11px; font-weight: 800; width: 26px; height: 22px; border-radius: 6px; display: grid; place-items: center; flex: none; }
+  .tA { background: var(--l5); color: #fff; } .tB { background: var(--l4); color: var(--ink); } .tC { background: var(--l3); color: var(--ink); }
+  .tM { background: #EFEDFF; color: #4C3BB5; }
+  .code { font: 12px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace; color: var(--quiet); }
+  .kv { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
+  .kv div { background: #EEF0EB; border-radius: 10px; padding: 10px 12px; }
+  .kv b { display: block; font-size: 11px; letter-spacing: 1px; text-transform: uppercase; color: var(--quiet); font-weight: 700; }
+  .kv span { font-weight: 600; word-break: break-all; }
+  .empty { color: var(--quiet); padding: 32px 0; text-align: center; }
+  .row { display: flex; gap: 14px; align-items: center; padding: 12px 6px; border-top: 1px solid var(--rule); cursor: pointer; border-radius: 8px; }
+  .row:first-of-type { border-top: none; } .row:hover { background: #F0F2EC; }
+  .row .t { font-weight: 600; } .row .s { color: var(--quiet); font-size: 13px; }
+  .note { font-size: 13px; color: var(--quiet); margin-top: 14px; }
+  .bar { height: 8px; background: #E4E7E0; border-radius: 99px; overflow: hidden; margin-top: 6px; }
+  .bar i { display: block; height: 100%; background: var(--blue); border-radius: 99px; transition: width .25s; }
+  .bar i.hot { background: var(--l5); }
+  .heads { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px 20px; margin-top: 14px; }
+  .n { display: flex; justify-content: space-between; font-size: 13px; font-weight: 600; }
+  .why { display: flex; justify-content: space-between; padding: 6px 0; border-top: 1px solid var(--rule); font-size: 14px; }
+  .why span:last-child { font-weight: 700; color: var(--l5); font-variant-numeric: tabular-nums; }
+  table.rep { width: 100%; border-collapse: collapse; font-size: 14px; margin-top: 6px; }
+  table.rep th { text-align: left; color: var(--quiet); font-size: 11px; letter-spacing: 1px; text-transform: uppercase; padding: 8px 6px; }
+  table.rep td { padding: 9px 6px; border-top: 1px solid var(--rule); }
+  table.rep .num { text-align: right; font-variant-numeric: tabular-nums; }
+  .groups { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 18px 24px; }
+  .grp h4 { margin: 0 0 8px; font-size: 12px; letter-spacing: 1.2px; text-transform: uppercase; color: var(--quiet); }
+  .tog { display: flex; align-items: center; gap: 10px; padding: 5px 0; font-size: 14px; cursor: pointer; user-select: none; }
+  .tog input { width: 16px; height: 16px; accent-color: var(--blue); }
+  .slider { padding: 6px 0; font-size: 14px; } .slider input { width: 100%; accent-color: var(--blue); }
+  .presets { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 18px; }
+  .callout { background: #FFF8EC; border: 1px solid #F4D9A8; border-radius: 12px; padding: 14px 18px; font-size: 14px; margin-bottom: 20px; }
+  .flow { display: flex; align-items: stretch; gap: 0; margin-bottom: 20px; background: var(--navy); border-radius: 16px; padding: 18px 20px; overflow-x: auto; }
+  .step { flex: 1; min-width: 120px; color: #F2F4F0; padding: 0 10px; position: relative; }
+  .step + .step::before { content: "→"; position: absolute; left: -8px; top: 8px; color: #5B6B88; font-weight: 700; }
+  .step b { display: block; font-size: 13px; } .step span { font-size: 12px; color: #9FB0CC; }
+  .step i { font-style: normal; font-size: 11px; font-weight: 800; letter-spacing: 1px; color: #7FA0FF; }
+  .kpis { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 16px; margin-bottom: 20px; }
+  .kpi { background: var(--card); border: 1px solid var(--rule); border-radius: 14px; padding: 16px 18px; }
+  .kpi b { display: block; font-size: 30px; font-weight: 700; letter-spacing: -.5px; font-variant-numeric: tabular-nums; }
+  .kpi span { font-size: 13px; color: var(--quiet); }
+  @media (max-width: 1000px) { .kpis { grid-template-columns: repeat(2, 1fr); } }
+  .ipo { display: grid; grid-template-columns: 1fr 1.2fr 0.9fr; gap: 0; margin-top: 18px; border: 1px solid var(--rule); border-radius: 14px; overflow: hidden; }
+  .ipo > div { padding: 14px 16px; font-size: 13px; }
+  .ipo > div + div { border-left: 1px solid var(--rule); }
+  .ipo h5 { margin: 0 0 8px; font-size: 11px; letter-spacing: 1.4px; text-transform: uppercase; color: var(--blue); }
+  .ipo li { margin: 3px 0; } .ipo ul { margin: 0; padding-left: 16px; color: var(--muted); }
+  .ipo .p { display: flex; justify-content: space-between; gap: 8px; padding: 4px 0; border-top: 1px dashed var(--rule); }
+  .ipo .p:first-of-type { border-top: 0; }
+  [hidden] { display: none !important; }
+</style>
+</head>
+<body>
+<header>
+  <div class="motif"><span style="background:#3D6BF0"></span><span style="background:#93A9EE"></span><span style="background:#D5D9E0"></span><span style="background:#F4B183"></span><span style="background:#E0622A"></span></div>
+  <h1>Device Trust · ML risk engine</h1>
+  <nav><button data-tab="live" class="on">Live decisions</button><button data-tab="try">Try the model</button><button data-tab="model">Model</button></nav>
+  <div class="grow"></div>
+  <span class="pill live" id="status">Live</span>
+  <span class="pill" id="count">0 decisions</span>
+  <button onclick="resetAll()">Clear</button>
+</header>
+
+<!-- LIVE -->
+<div class="wrap" id="tab-live">
+  <div class="flow">
+    <div class="step"><i>01</i><b>Device</b><span>~22 signals collected</span></div>
+    <div class="step"><i>02</i><b>Attestation</b><span>hardware-signed facts + nonce</span></div>
+    <div class="step"><i>03</i><b>Rules</b><span>hard evidence, Tier A/B/C</span></div>
+    <div class="step"><i>04</i><b>ML model</b><span>4 threat heads + autoencoder</span></div>
+    <div class="step"><i>05</i><b>Trust level</b><span>max(rules, ML) · 1–5</span></div>
+    <div class="step"><i>06</i><b>Bank</b><span>verifies signature · acts</span></div>
+  </div>
+  <div class="kpis">
+    <div class="kpi"><b id="k-total">0</b><span>Devices assessed</span></div>
+    <div class="kpi"><b id="k-block" style="color:var(--l5)">0</b><span>Blocked</span></div>
+    <div class="kpi"><b id="k-ml" style="color:#4C3BB5">0</b><span>Raised by ML beyond the rules</span></div>
+    <div class="kpi"><b id="k-ms">–</b><span>Median server decision time</span></div>
+  </div>
+  <div class="scen" id="scen" hidden><span class="lbl">Run a simulated device:</span></div>
+  <div class="grid">
+    <section class="card" id="latest"><p class="eyebrow">Latest decision</p><div class="empty">Waiting for the first assessment. Run a simulated device above, or use the Android app.</div></section>
+    <section class="card"><p class="eyebrow">History</p><div id="history"><div class="empty">No decisions yet.</div></div>
+      <p class="note">Final level = the higher of the rules and the ML model. Hard evidence (replay, bad signature, repackaging) can never be lowered by the model.</p></section>
+  </div>
+</div>
+
+<!-- TRY -->
+<div class="wrap" id="tab-try" hidden>
+  <div class="grid">
+    <section class="card">
+      <p class="eyebrow">1 · Inputs: device signals</p>
+      <div class="presets" id="presets"></div>
+      <div class="groups" id="controls"></div>
+    </section>
+    <section class="card" id="tryout"><p class="eyebrow">2 · Process → 3 · Output</p><div class="empty">Change a signal to score it.</div></section>
+  </div>
+</div>
+
+<!-- MODEL -->
+<div class="wrap" id="tab-model" hidden>
+  <div class="callout" id="caveat">Loading model report…</div>
+  <div class="grid">
+    <div style="display:flex;flex-direction:column;gap:24px;min-width:0">
+    <section class="card"><p class="eyebrow">Evaluation (held-out test data)</p><div id="evaltable"></div></section>
+    <section class="card"><p class="eyebrow">Anomaly model admission</p><div id="anomtable"></div></section>
+    </div>
+    <section class="card"><p class="eyebrow">How a decision is made</p>
+      <div class="why"><span>1. Rules: attestation, signature, nonce, artefacts</span><span style="color:var(--ink)">Rules level</span></div>
+      <div class="why"><span>2. Four threat heads (gradient boosting) + anomaly model (autoencoder or Isolation Forest)</span><span style="color:var(--ink)">ML level</span></div>
+      <div class="why"><span>3. Final level = max(rules, ML)</span><span style="color:var(--ink)">1–5</span></div>
+      <div class="why"><span>4. Bank policy per action</span><span style="color:var(--ink)">Allow / step-up / block</span></div>
+      <p class="note"><b>ML level:</b> two heads above threshold → 5; one → 4; anomaly ≥ p99.5 → 3; anomaly ≥ p97 → 2; else 1.
+        Each head's threshold is set so that at most 0.1% of genuine test devices cross it.</p>
+      <div id="thresholds"></div>
+    </section>
+  </div>
+</div>
+
+<script>
+const LABEL = {1:"Genuine",2:"Normal",3:"Suspicious",4:"High risk",5:"Critical"};
+const OUT = {allow:"Allow", step_up:"Step-up", block:"Block"};
+const HEADS = {hidden_root:"Hidden root", instrumentation:"Instrumentation", emulator_virtual:"Emulator / virtual", app_tamper_clone:"App tamper / clone"};
+const AG = {agree:"ML agrees with rules", ml_only:"ML found risk the rules missed", rules_only:"Rules evidence only (not visible to ML)"};
+let data = [], selected = null, config = {}, token = "";
+try { token = localStorage.getItem("admin_token") || ""; } catch (e) {}
+
+const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+const time = t => new Date(t * 1000).toLocaleTimeString();
+const act = a => String(a ?? "").replace(/_/g, " ").replace(/^./, c => c.toUpperCase());
+const yn = v => v === true ? "Yes" : v === false ? "No" : "—";
+const lv = v => v ? `<span class="chip xs lv${v}">${v}</span>` : `<span class="chip xs lv0">–</span>`;
+const post = (u, b) => fetch(u, {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify(b || {})});
+
+// ---------- tabs ----------
+document.querySelectorAll("nav button").forEach(b => b.onclick = () => {
+  document.querySelectorAll("nav button").forEach(x => x.classList.toggle("on", x === b));
+  ["live", "try", "model"].forEach(t => document.getElementById("tab-" + t).hidden = t !== b.dataset.tab);
+  if (b.dataset.tab === "model") loadReport();
+});
+
+// ---------- shared ML panel ----------
+function mlPanel(m, opts = {}) {
+  if (!m) return '<div class="empty" style="padding:12px 0">No ML model loaded. Run <span class="code">python train_shadow.py</span> and restart.</div>';
+  if (m.error) return `<div class="empty" style="padding:12px 0">Model error (${esc(m.error)}); the rules level was used.</div>`;
+  const heads = Object.entries(m.heads).map(([k, v]) => `<div><div class="n"><span>${esc(HEADS[k] || k)}</span><span>${Math.round(v * 100)}%</span></div>
+    <div class="bar"><i class="${v >= .5 ? "hot" : ""}" style="width:${Math.max(2, v * 100)}%"></i></div></div>`).join("");
+  const why = (m.explanation || []).filter(e => e.impact > 0).slice(0, 4).map(e =>
+    `<div class="why"><span>${esc(e.label)}</span><span>+${Math.round(e.impact * 100)} pts</span></div>`).join("");
+  return `<div class="n"><span>Anomaly vs. low-risk devices</span><span>p${esc(m.anomaly_pct)}</span></div>
+    <div class="bar"><i class="${m.anomaly_pct >= 99.5 ? "hot" : ""}" style="width:${Math.max(2, m.anomaly_pct)}%"></i></div>
+    <div class="heads">${heads}</div>
+    ${why ? `<div class="section" style="margin-top:16px"><div class="n" style="margin-bottom:4px"><span>Why (${esc(HEADS[m.top])})</span><span></span></div>${why}</div>` : ""}
+    ${m.agreement && !opts.noAgree ? `<span class="tag ${m.agreement === "ml_only" ? "t-blue" : "t-grey"}">${esc(AG[m.agreement] || m.agreement)}</span>` : ""}
+    <p class="note">Model ${esc(m.model)} · trained on ${esc(m.data)} data.</p>`;
+}
+const reasonList = rs => (rs || []).map(r =>
+  `<div class="reason"><span class="tier t${esc(r.tier)}">${esc(r.tier)}</span><div><div>${esc(r.text)}</div><div class="code">${esc(r.code)}</div></div></div>`).join("")
+  || '<div class="reason"><span class="tier" style="background:#E5F4E4;color:#1B5E20">✓</span><div>No rule fired.</div></div>';
+
+// ---------- live ----------
+function renderLatest(d) {
+  const el = document.getElementById("latest");
+  if (!d) { el.innerHTML = '<p class="eyebrow">Latest decision</p><div class="empty">Waiting for the first assessment. Run a simulated device above, or use the Android app.</div>'; return; }
+  const dev = d.device || {}, a = d.attestation;
+  const reasons = reasonList(d.reasons_detail) + (d.ml_level > d.rules_level
+    ? `<div class="reason"><span class="tier tM">ML</span><div><div>ML model scored a higher risk than the rules.</div><div class="code">ML_RISK</div></div></div>` : "");
+  const att = a ? `<div class="kv">
+      <div><b>Chain</b><span>${a.chain_valid ? "Valid" : "Invalid"}</span></div>
+      <div><b>Trusted root</b><span>${yn(a.root_trusted)}</span></div>
+      <div><b>Security level</b><span>${esc(a.security_level)}</span></div>
+      <div><b>Verified boot</b><span>${esc(a.verified_boot_state ?? "—")}</span></div>
+      <div><b>Bootloader locked</b><span>${yn(a.device_locked)}</span></div>
+      <div><b>OS patch</b><span>${esc(a.os_patch_level ?? "—")}</span></div></div>` : '<div class="empty" style="padding:12px 0">No attestation in this request.</div>';
+  el.innerHTML = `
+    <p class="eyebrow">${d === data[0] ? "Latest decision" : "Selected decision"} · ${esc(time(d.iat))}</p>
+    <div class="hero">
+      <div class="chip lv${d.trust_level}">${d.trust_level}</div>
+      <div>
+        <p class="label">Level ${d.trust_level} · ${LABEL[d.trust_level]}</p>
+        <div class="meta">${esc(act(d.action))} · ${esc(dev.manufacturer)} ${esc(dev.model)} · Android ${esc(dev.release ?? dev.sdk_int)} · ${esc(d.server_ms)} ms</div>
+        <span class="tag o-${esc(d.outcome)}">${OUT[d.outcome] || esc(d.outcome)}</span>
+        ${d.simulated ? '<span class="tag t-grey">Simulated device</span>' : ""}
+        ${d.reduced_assurance ? '<span class="tag t-grey">Reduced assurance</span>' : ""}
+        ${d.developer_class ? '<span class="tag t-blue">Developer class</span>' : ""}
+      </div>
+    </div>
+    <div class="ipo">
+      <div><h5>1 · Inputs</h5><ul>
+        <li>${esc(dev.manufacturer)} ${esc(dev.model)}, Android ${esc(dev.release ?? dev.sdk_int)}</li>
+        <li>Attestation: ${a ? (a.chain_valid ? "valid chain" : "invalid chain") + (a.verified_boot_state ? ", boot " + esc(a.verified_boot_state) : "") : "none"}</li>
+        <li>${(d.inputs || []).length ? "Signals present: " + (d.inputs || []).map(esc).join(", ") : "No risk signals present"}</li>
+        <li>Action: ${esc(act(d.action))}</li></ul></div>
+      <div><h5>2 · Process</h5>
+        <div class="p"><span>Nonce + signature + attestation checked</span><span>${(d.reasons || []).some(r => r.startsWith("AT_") && !["AT_UNTRUSTED_ROOT","AT_SOFTWARE_ONLY","AT_NO_ATTESTATION","AT_COUNTER_REGRESSED"].includes(r)) ? "✗" : "✓"}</span></div>
+        <div class="p"><span>Rules (${(d.reasons_detail || []).length} hit)</span>${lv(d.rules_level)}</div>
+        <div class="p"><span>ML: 4 heads + ${esc(d.ml?.anomaly_model || "anomaly")}</span>${lv(d.ml_level)}</div>
+        <div class="p"><span><b>Final = higher of the two</b></span>${lv(d.trust_level)}</div></div>
+      <div><h5>3 · Output</h5>
+        <div style="display:flex;align-items:center;gap:10px">${lv(d.trust_level)}<b>${LABEL[d.trust_level]}</b></div>
+        <span class="tag o-${esc(d.outcome)}">${OUT[d.outcome] || esc(d.outcome)} · ${esc(act(d.action))}</span>
+        <p class="note" style="margin-top:8px">Signed decision (ES256) sent to the bank in ${esc(d.server_ms)} ms</p></div>
+    </div>
+    <div class="section"><p class="eyebrow">Reasons</p>${reasons}</div>
+    <div class="section"><p class="eyebrow">ML model</p>${mlPanel(d.ml)}</div>
+    <div class="section"><p class="eyebrow">Hardware attestation</p>${att}</div>
+    <p class="note">Decision ${esc(d.decision_id)} is signed (ES256). The bank verifies it before acting.</p>`;
+}
+function renderHistory() {
+  const h = document.getElementById("history");
+  if (!data.length) { h.innerHTML = '<div class="empty">No decisions yet.</div>'; return; }
+  h.innerHTML = data.map((d, i) => `
+    <div class="row" onclick="pick(${i})">
+      <div class="chip sm lv${d.trust_level}">${d.trust_level}</div>
+      <div class="grow"><div class="t">${esc(act(d.action))} · ${LABEL[d.trust_level]}</div>
+        <div class="s">${esc((d.device||{}).model)} · ${esc(time(d.iat))} · rules ${d.rules_level ?? "–"} · ML ${d.ml_level ?? "–"}</div></div>
+      <span class="tag o-${esc(d.outcome)}" style="margin:0">${OUT[d.outcome] || esc(d.outcome)}</span>
+    </div>`).join("");
+}
+window.pick = i => { selected = data[i]; renderLatest(selected); };
+
+async function admin(path) {
+  let r = await post(path + "?token=" + encodeURIComponent(token));
+  if (r.status === 401) {
+    token = prompt("Admin token") || "";
+    try { localStorage.setItem("admin_token", token); } catch (e) {}
+    r = await post(path + "?token=" + encodeURIComponent(token));
+  }
+  return r;
+}
+async function resetAll() { await admin("/v1/admin/reset"); selected = null; poll(); }
+
+async function poll() {
+  try {
+    const j = await (await fetch("/v1/decisions?limit=50")).json();
+    if (j.decisions[0]?.decision_id !== data[0]?.decision_id) selected = null;
+    data = j.decisions; config = j.config;
+    document.getElementById("count").textContent = `${data.length} decision${data.length === 1 ? "" : "s"}`;
+    document.getElementById("status").textContent = "Live";
+    renderLatest(selected || data[0]); renderHistory();
+    const ms = data.map(d => d.server_ms).sort((a, b) => a - b);
+    document.getElementById("k-total").textContent = data.length;
+    document.getElementById("k-block").textContent = data.filter(d => d.outcome === "block").length;
+    document.getElementById("k-ml").textContent = data.filter(d => d.ml_level > d.rules_level).length;
+    document.getElementById("k-ms").textContent = ms.length ? ms[Math.floor(ms.length / 2)] + " ms" : "–";
+  } catch (e) { document.getElementById("status").textContent = "Offline"; }
+}
+async function loadScenarios() {
+  try {
+    const j = await (await fetch("/v1/demo")).json();
+    if (!j.enabled) return;
+    const box = document.getElementById("scen");
+    Object.entries(j.scenarios).forEach(([k, title]) => {
+      const b = document.createElement("button");
+      b.textContent = title.replace(/\s*\(.*\)$/, "").replace("Genuine phone, developer options + USB debugging on", "Developer phone");
+      b.title = title;
+      b.onclick = async () => { b.disabled = true; await post("/v1/demo/" + k); b.disabled = false; poll(); };
+      box.appendChild(b);
+    });
+    box.hidden = false;
+  } catch (e) {}
+}
+
+// ---------- try the model ----------
+const CONTROLS = [
+  ["Root", [["root_su_paths", "su binary present", ["/system/bin/su"], []], ["root_manager_packages", "Root manager app (Magisk)", ["com.topjohnwu.magisk"], []],
+            ["root_magisk_mounts", "Magisk mounts"], ["root_system_rw", "System mounted read-write"],
+            ["selinux_mode", "SELinux permissive", "Permissive", "Enforcing"], ["props_test_keys", "Test-keys build"]]],
+  ["Runtime", [["rt_frida_threads", "Frida threads", ["gum-js-loop", "gmain"], []], ["rt_frida_maps", "Frida in memory maps"], ["rt_frida_port", "Frida port open"],
+               ["rt_xposed", "Xposed / LSPosed"], ["rt_debugger_connected", "Debugger connected"], ["rt_tracer_pid", "Tracer attached", 4242, 0]]],
+  ["Emulator", [["emu_fingerprint", "Emulator fingerprint"], ["emu_hardware", "Emulator hardware"], ["emu_qemu_props", "QEMU properties"]]],
+  ["App & context", [["app_data_dir_ok", "Unexpected data directory (clone)", false, true], ["ctx_developer_options", "Developer options"],
+                     ["ctx_adb_enabled", "USB debugging"], ["ctx_accessibility_services", "Accessibility service", ["x.y/.Svc"], []], ["ctx_vpn", "VPN"]]],
+];
+const SLIDERS = [["sensor_count", "Sensors reported", 0, 60, 1, 30], ["slowdown", "Probe slowdown (hooks make calls slower)", 0.5, 3, 0.1, 1], ["failed", "Blocked probes", 0, 6, 1, 0]];
+const PRESETS = {
+  "Genuine phone": {},
+  "Developer phone": {ctx_developer_options: 1, ctx_adb_enabled: 1},
+  "Frida attached": {rt_frida_threads: 1, rt_frida_maps: 1, rt_frida_port: 1, slowdown: 1.8},
+  "Cloud phone (disguised emulator)": {sensor_count: 5, ctx_developer_options: 1, ctx_adb_enabled: 1, slowdown: 0.6},
+  "Renamed Frida (side effects only)": {slowdown: 2.5, failed: 1},
+  "Rooted + Frida": {root_manager_packages: 1, root_magisk_mounts: 1, rt_frida_threads: 1, rt_frida_port: 1},
+};
+function buildControls() {
+  const c = document.getElementById("controls");
+  c.innerHTML = CONTROLS.map(([g, items]) => `<div class="grp"><h4>${g}</h4>${items.map(([k, label]) =>
+    `<label class="tog"><input type="checkbox" data-k="${k}"> ${esc(label)}</label>`).join("")}</div>`).join("")
+    + `<div class="grp" style="grid-column:1/-1"><h4>Measured values</h4>${SLIDERS.map(([k, label, lo, hi, st, def]) =>
+    `<div class="slider"><div class="n"><span>${esc(label)}</span><span id="v-${k}">${def}</span></div>
+      <input type="range" data-k="${k}" min="${lo}" max="${hi}" step="${st}" value="${def}"></div>`).join("")}</div>`;
+  c.querySelectorAll("input").forEach(i => i.oninput = () => { if (i.type === "range") document.getElementById("v-" + i.dataset.k).textContent = i.value; score(); });
+  document.getElementById("presets").innerHTML = Object.keys(PRESETS).map(p => `<button>${esc(p)}</button>`).join("");
+  document.querySelectorAll("#presets button").forEach(b => b.onclick = () => applyPreset(PRESETS[b.textContent]));
+}
+function applyPreset(p) {
+  document.querySelectorAll("#controls input").forEach(i => {
+    const k = i.dataset.k;
+    if (i.type === "checkbox") i.checked = !!p[k];
+    else { const d = SLIDERS.find(s => s[0] === k); i.value = p[k] ?? d[5]; document.getElementById("v-" + k).textContent = i.value; }
+  });
+  score();
+}
+let scoreTimer;
+function score() {
+  clearTimeout(scoreTimer);
+  scoreTimer = setTimeout(async () => {
+    const probes = {}; let slowdown = 1, failed = 0;
+    CONTROLS.forEach(([, items]) => items.forEach(([k, , on = true, off = false]) => {
+      probes[k] = document.querySelector(`#controls input[data-k="${k}"]`).checked ? on : off;
+    }));
+    document.querySelectorAll('#controls input[type="range"]').forEach(i => {
+      if (i.dataset.k === "slowdown") slowdown = +i.value; else if (i.dataset.k === "failed") failed = +i.value; else probes[i.dataset.k] = +i.value;
+    });
+    const r = await (await post("/v1/predict", {probes, slowdown, failed})).json();
+    document.getElementById("tryout").innerHTML = `<p class="eyebrow">2 · Process → 3 · Output</p>
+      <div class="hero"><div class="chip lv${r.level}">${r.level}</div><div><p class="label">Level ${r.level} · ${LABEL[r.level]}</p>
+        <div class="meta">Scored live: rules + ML, no attestation in this view</div></div></div>
+      <div class="split"><div>${lv(r.rules_level)}<span><b>Rules</b>artefacts</span></div>
+        <div>${lv(r.ml_level)}<span><b>ML model</b>4 heads + anomaly</span></div>
+        <div>${lv(r.level)}<span><b>Final</b>higher of the two</span></div></div>
+      <div class="section"><p class="eyebrow">ML model</p>${mlPanel(r.ml, {noAgree: true})}</div>
+      <div class="section"><p class="eyebrow">Rules</p>${reasonList(r.reasons)}</div>`;
+  }, 120);
+}
+
+// ---------- model ----------
+async function loadReport() {
+  try {
+    const j = await (await fetch("/v1/ml/report")).json();
+    const r = j.report;
+    if (!r) { document.getElementById("caveat").textContent = "No model report. Run python train_shadow.py and restart."; return; }
+    document.getElementById("caveat").innerHTML = `<b>Trained on ${esc(r.model.data)} data.</b> ${esc(r.caveat)} The pattern matters more than the numbers: visible attacks are easy; hidden and never-seen variants are hard, which is why real attack-lab data comes next.`;
+    const rows = Object.entries(r.heads).map(([k, h]) => `<tr><td>${esc(HEADS[k] || k)}</td><td class="num">${h.pr_auc.toFixed(2)}</td>
+      <td class="num">${Math.round(h.recall_at_fpr*100)}%</td><td class="num">${Math.round(h.recall_hidden_variant*100)}%</td>
+      <td class="num">${Math.round(r.unseen_variant[k + ":hidden"]*100)}%</td></tr>`).join("");
+    document.getElementById("evaltable").innerHTML = `<table class="rep"><tr><th>Threat head</th><th class="num">PR-AUC</th>
+      <th class="num">Recall @ 0.1% FPR</th><th class="num">Hidden variant</th><th class="num">Never-seen variant</th></tr>${rows}</table>
+      <p class="note"><b>Recall @ 0.1% FPR:</b> attacks caught while flagging at most 1 in 1,000 genuine devices.
+      <b>Never-seen variant:</b> the model was trained without that tool variant, then tested on it.</p>`;
+    const am = r.anomaly_models, AN = {iforest: "Isolation Forest", autoencoder: "Autoencoder (25-12-4-12-25)"};
+    if (am) document.getElementById("anomtable").innerHTML = `<table class="rep"><tr><th>Model</th><th class="num">Genuine flagged</th>
+      <th class="num">Attacks flagged</th><th class="num">Hidden variants</th><th></th></tr>${Object.entries(am).map(([k, a]) =>
+      `<tr><td>${esc(AN[k] || k)}</td><td class="num">${(a.genuine_above_p99*100).toFixed(1)}%</td><td class="num">${(a.attacks_above_p99*100).toFixed(1)}%</td>
+      <td class="num">${(a.hidden_above_p99*100).toFixed(1)}%</td><td class="num">${k === r.anomaly_selected ? '<span class="tag o-allow" style="margin:0">In use</span>' : ""}</td></tr>`).join("")}</table>
+      <p class="note">Both learn only from low-risk devices and flag anything above their 99th percentile. The autoencoder replaces Isolation Forest
+      only if it catches at least 2 points more attacks on held-out data.</p>`;
+    if (j.thresholds) document.getElementById("thresholds").innerHTML = `<table class="rep"><tr><th>Head</th><th class="num">Threshold</th></tr>${
+      Object.entries(j.thresholds).map(([k, t]) => `<tr><td>${esc(HEADS[k] || k)}</td><td class="num">${t.toFixed(3)}</td></tr>`).join("")}</table>`;
+  } catch (e) {}
+}
+
+buildControls(); applyPreset({}); loadScenarios(); poll(); setInterval(poll, 1500);
+</script>
+</body>
+</html>

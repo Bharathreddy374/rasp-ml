@@ -1,0 +1,7 @@
+.venv
+data
+__pycache__
+*/__pycache__
+roots/sim_root.pem
+roots/google_roots.pem
+config.json
