@@ -53,7 +53,7 @@ class ApiTest(unittest.TestCase):
         call(app, "POST", "/v1/collect", phone(), headers={"x-forwarded-for": "198.51.100.7"})
         self.assertEqual(store.get(store.list_sessions(None, None, 1)[0]["id"])["session"]["client_ip"], "203.0.113.9")
         app, store = make(trust_proxy=True)
-        call(app, "POST", "/v1/collect", phone(), headers={"x-forwarded-for": "198.51.100.7, 10.0.0.1"})
+        call(app, "POST", "/v1/collect", phone(), headers={"x-forwarded-for": "6.6.6.6, 198.51.100.7"})   # first entry forged by the client
         self.assertEqual(store.get(store.list_sessions(None, None, 1)[0]["id"])["session"]["client_ip"], "198.51.100.7")
 
     def test_retry_is_idempotent(self):

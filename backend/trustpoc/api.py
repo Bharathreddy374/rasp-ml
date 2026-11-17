@@ -97,9 +97,11 @@ def create_app(settings: Settings | None = None, store: Store | None = None,
 
     def client_ip(request: Request) -> str | None:
         if s.trust_proxy:
+            # The trusted proxy APPENDS the address it saw, so take the last entry. Earlier entries
+            # come from the client and can be forged.
             forwarded = request.headers.get("x-forwarded-for", "")
-            if forwarded:
-                return forwarded.split(",")[0].strip()
+            if forwarded.strip():
+                return forwarded.split(",")[-1].strip()
         return request.client.host if request.client else None
 
     @app.get("/health")

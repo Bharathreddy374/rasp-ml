@@ -1,0 +1,26 @@
+# Render Blueprint for the device-trust collector (backend/).
+# Render dashboard -> New -> Blueprint -> pick this repository. Render asks for DATABASE_URL.
+services:
+  - type: web
+    name: rasp-ml-collector
+    runtime: docker
+    region: singapore              # next to the Neon database (ap-southeast-1)
+    plan: free                     # free instances sleep after 15 min idle; the first request then takes ~1 min
+    dockerfilePath: ./backend/Dockerfile
+    dockerContext: ./backend
+    healthCheckPath: /health
+    autoDeploy: true
+    buildFilter:
+      paths:
+        - backend/**
+    envVars:
+      - key: DATABASE_URL          # Neon connection string; entered in the dashboard, never committed
+        sync: false
+      - key: ADMIN_TOKEN           # for /v1/sessions and /v1/model; Render generates a random value
+        generateValue: true
+      - key: TRUST_PROXY           # Render's proxy sets X-Forwarded-For: needed for the real client IP
+        value: "1"
+      - key: ML_MODE
+        value: enforce
+      - key: GEO_DATA              # "1" downloads country / ASN / Tor data at build time
+        value: "0"
