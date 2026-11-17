@@ -126,7 +126,7 @@ Before trusting any signal, the backend checks:
 3. The signature matches the payload bytes → otherwise Level 5.
 4. The counter has gone up.
 
-See [FEATURES.md](FEATURES.md) for every signal.
+See [PAYLOAD.md](PAYLOAD.md) for the full wire specification (fields, encoding, signing, response, errors) and [FEATURES.md](FEATURES.md) for every signal.
 
 ## 5. Attack test: rooted emulator + Frida
 

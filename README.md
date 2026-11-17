@@ -19,7 +19,7 @@ POST /v2/assess (gzip) ─────────────────▶ ve
 |---|---|
 | `android/` | Feature Catalogue app (Kotlin, Jetpack Compose). Probes in `features/probes/`, native probes in `app/src/main/cpp/trustprobe.c`, signed client in `features/network/`. |
 | `backend/` | FastAPI service: `trustpoc/attestation.py` (Google key attestation), `signals.py` (signal → rule mapping), `rules.py`, `ml.py`, `server_signals.py`, dashboard, simulator, tests. |
-| `docs/` | [How to use](docs/USAGE.md) · [Feature catalogue: what, how, device variance](docs/FEATURES.md) |
+| `docs/` | [How to use](docs/USAGE.md) · [Feature catalogue: what, how, device variance](docs/FEATURES.md) · [Payload specification](docs/PAYLOAD.md) ([real example](docs/examples/payload_example.json)) |
 
 ## Status
 
