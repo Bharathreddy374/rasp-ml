@@ -142,6 +142,15 @@ class AttestationTest(unittest.TestCase):
         self.assertFalse({c for c in self.codes(res) if c.startswith("AT_")})
         self.assertEqual(res["decision"]["attestation"]["security_level"], "TEE")
 
+    def test_stored_session_shows_the_attestation(self):
+        key, chain, res = self.first()
+        again = self.send("s1", key, chain)                           # client retry: stored result
+        self.assertTrue(again["duplicate"])
+        for d in (again["decision"], self.store.get(res["id"]) and __import__("trustpoc.pipeline").pipeline.render(
+                self.store.get(res["id"]), duplicate=True)["decision"]):
+            self.assertEqual(d["assurance"], "attested")
+            self.assertEqual(d["attestation"]["security_level"], "TEE")
+
     def test_second_session_uses_the_same_key(self):
         key, chain, _ = self.first()
         res = self.send("s2", key, chain)

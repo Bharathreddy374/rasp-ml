@@ -134,7 +134,8 @@ def render(record: dict, duplicate: bool) -> dict:
         "decision": {
             "level": x.get("final_level"), "risk_score": x.get("risk_score"), "score_basis": ml.get("score_basis"),
             "label": x.get("label"), "outcome": x.get("outcome"),
-            "action": s["action"], "assurance": x.get("assurance"), "attestation": x.get("attestation"),
+            "action": s["action"], "assurance": x.get("assurance") or s.get("assurance"),
+            "attestation": x.get("attestation") or s.get("attestation"),   # stored with the session
             "rules_level": x.get("rules_level"), "ml_level": x.get("ml_level"), "ml_mode": x.get("ml_mode"),
             "reasons": x.get("reasons"),
         },
