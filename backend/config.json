@@ -1,4 +1,5 @@
 {
-  "expected_cert_sha256": [],
+  "expected_cert_sha256": ["125ae53a90d2d8e10060a2ff82b1164ef50e33f87668bab3539cf0a263ea6b3e"],
+  "expected_packages": ["com.example.demo", "com.example.demo.dev"],
   "release_manifests": []
 }

@@ -3,6 +3,9 @@
 The phone never sends F001-F015 (attestation), F286-F350 (network, history, graph) or
 F025/F081/F088/F363-F365 (cross-checks). This stage computes each one it can, from:
 
+  integrity integrity.py: the verified key attestation and payload signature (F001-F010,
+            F025, F317, F321, F364), merged here, plus their history across sessions
+
   request   client IP, User-Agent, header order, proxy headers, the phone's clock
   context   the optional device_context block (SIM / network country, timezone, locale,
             network type, boot count, uptime, hashed Android ID)
@@ -10,11 +13,13 @@ F025/F081/F088/F363-F365 (cross-checks). This stage computes each one it can, fr
   database  ONE query (store.lookup): this install's history, counts per /24 network, ASN,
             sensor signature and Android ID, and the install's device-graph component
   config    release manifest and signing certificate (config.json)
+  edge      TLS fingerprint and round-trip time from a trusted edge proxy (edge/cloudflare-worker.js)
 
 Every signal it cannot compute is listed in `not_computed` with the reason, so a missing
 value is never mistaken for a clean one. See BACKEND_SIGNALS for the full list.
 """
 import hashlib
+import importlib.resources
 import ipaddress
 import math
 import re
@@ -22,9 +27,13 @@ import statistics
 import time
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
+from functools import lru_cache
+from pathlib import Path
+from zoneinfo import ZoneInfo
 
 from . import normalize
 from .geo import GeoIP
+from .integrity import Integrity
 from .store import LookupQuery
 
 CLOCK_SKEW_LIMIT_S = 30 * 60
@@ -32,6 +41,7 @@ SESSION_WINDOW_S = 30 * 60
 UPTIME_DRIFT_LIMIT_S = 300
 REINSTALL_LIMIT = 3
 FARM_SCORE_LIMIT = 0.7
+JA3_COHORT_MIN = 20          # sessions with a TLS fingerprint needed before F297 means anything
 _UA = re.compile(r"Android ([\d.]+); (.+?) Build/")
 PROXY_HEADERS = ("via", "forwarded", "x-forwarded-for", "x-real-ip", "x-proxy-id", "proxy-connection")
 
@@ -43,33 +53,35 @@ NO_PUBLIC_IP = "client IP is not public (private / loopback), so it has no count
 NO_CONTEXT = "needs the device_context block from the app"
 NO_HISTORY = "needs an earlier session of this install"
 NO_BANK = "needs account / payee / fraud-outcome data from the bank, which this service does not receive"
-NO_EDGE = "needs TLS / TCP data from an edge proxy in front of this service"
+NO_EDGE = "needs an edge proxy that forwards TLS / RTT data (edge/cloudflare-worker.js with EDGE_SECRET)"
+NO_ATTEST_SENT = "needs key attestation from the app (version 1.3 or later)"
+NO_ATTEST_HISTORY = "needs an earlier attested session of this install"
 
 BACKEND_SIGNALS = {
     # attestation
-    **{f"F{n:03d}": NO_ATTESTATION for n in range(1, 11)},
+    **{f"F{n:03d}": NO_ATTEST_SENT for n in range(1, 11)},
     **{f"F{n:03d}": NO_PLAY_INTEGRITY for n in range(11, 16)},
-    "F025": NO_ATTESTATION,
+    "F025": NO_ATTEST_SENT,
     # network
-    "F286": NO_GEO, "F287": NO_GEO, "F288": NO_GEO, "F289": NO_GEO, "F290": "needs a country-to-timezone table",
+    "F286": NO_GEO, "F287": NO_GEO, "F288": NO_GEO, "F289": NO_GEO, "F290": "needs the IP country (geo data) and the phone's timezone (device_context)",
     "F291": NO_GEO, "F292": "", "F293": NO_GEO, "F294": NO_GEO, "F295": "", "F296": NO_EDGE,
     "F297": NO_EDGE, "F298": "", "F299": "User-Agent is not the app's Android client",
     "F300": "needs an authoritative DNS probe", "F301": NO_CONTEXT, "F302": NO_EDGE, "F303": NO_CONTEXT,
     "F304": NO_HISTORY, "F305": "needs 6 or more sessions of this install",
     # history
-    "F306": NO_HISTORY, "F307": NO_ATTESTATION, "F308": NO_ATTESTATION, "F309": NO_HISTORY,
+    "F306": NO_HISTORY, "F307": NO_ATTEST_SENT, "F308": NO_ATTEST_SENT, "F309": NO_HISTORY,
     "F310": NO_CONTEXT, "F311": NO_CONTEXT, "F312": NO_HISTORY, "F313": NO_HISTORY, "F314": NO_HISTORY,
-    "F315": NO_HISTORY, **{f"F{n}": NO_ATTESTATION for n in range(316, 322)}, "F322": NO_BANK,
-    "F323": NO_BANK, "F324": NO_ATTESTATION, "F325": "", "F326": NO_CONTEXT, "F327": NO_BANK,
+    "F315": NO_HISTORY, **{f"F{n}": NO_ATTEST_SENT for n in range(316, 322)}, "F322": NO_BANK,
+    "F323": NO_BANK, "F324": NO_ATTEST_SENT, "F325": "", "F326": NO_CONTEXT, "F327": NO_BANK,
     "F328": NO_BANK, "F329": "", "F330": NO_HISTORY, "F331": NO_HISTORY, "F332": NO_HISTORY,
     "F333": NO_HISTORY, "F334": NO_BANK, "F335": NO_BANK,
     # graph
-    "F336": NO_BANK, "F337": NO_ATTESTATION, "F338": "needs sensor signals F255 and F256",
+    "F336": NO_BANK, "F337": NO_ATTEST_SENT, "F338": "needs sensor signals F255 and F256",
     "F339": NO_PUBLIC_IP, "F340": NO_GEO, "F341": NO_BANK, "F342": NO_BANK, "F343": "", "F344": "",
     "F345": "", "F346": NO_BANK, "F347": "", "F348": "", "F349": "", "F350": "",
     # cross-checks
     "F081": "no expected_cert_sha256 in config.json", "F088": "no release_manifests in config.json",
-    "F363": NO_HISTORY, "F364": "the payload is not signed", "F365": "",
+    "F363": NO_HISTORY, "F364": NO_ATTEST_SENT, "F365": "",
 }
 
 
@@ -82,6 +94,8 @@ class Request:
     header_names: list[str] = field(default_factory=list)  # in the order the client sent them
     proxy_headers: list[str] = field(default_factory=list)  # proxy headers present (when no proxy is trusted)
     ja3: str | None = None                                   # from a trusted edge proxy only
+    rtt_ms: float | None = None                              # client TCP round-trip time, trusted edge only
+    signature: str | None = None                             # X-Rasp-Signature: body signed with the attested key
 
 
 @dataclass
@@ -122,6 +136,37 @@ def sensor_signature(signals: dict) -> str | None:
     return hashlib.sha256("|".join(parts).encode()).hexdigest()[:16]
 
 
+@lru_cache(maxsize=1)
+def _country_zones() -> dict[str, list[str]]:
+    """ISO country -> IANA zones, from the tz database's zone.tab (tzdata package or the OS)."""
+    text = None
+    try:
+        text = importlib.resources.files("tzdata.zoneinfo").joinpath("zone.tab").read_text(encoding="utf-8")
+    except (ModuleNotFoundError, FileNotFoundError):
+        p = Path("/usr/share/zoneinfo/zone.tab")
+        text = p.read_text(encoding="utf-8") if p.exists() else ""
+    out: dict[str, list[str]] = {}
+    for line in text.splitlines():
+        if line and not line.startswith("#"):
+            parts = line.split("\t")
+            if len(parts) >= 3:
+                out.setdefault(parts[0].upper(), []).append(parts[2])
+    return out
+
+
+def timezone_fits_country(tz: str, country: str, now: datetime) -> bool | None:
+    """Does the phone's timezone have the same UTC offset (now) as some zone of the IP's country?
+    Offsets rather than names, so aliases like Asia/Calcutta = Asia/Kolkata match. None = unknown."""
+    zones = _country_zones().get(country.upper())
+    try:
+        phone = now.astimezone(ZoneInfo(tz)).utcoffset()
+    except Exception:  # noqa: BLE001  (unknown zone name)
+        return None
+    if not zones:
+        return None
+    return any(now.astimezone(ZoneInfo(z)).utcoffset() == phone for z in zones)
+
+
 def header_hash(names: list[str]) -> str | None:
     if not names:
         return None
@@ -129,13 +174,14 @@ def header_hash(names: list[str]) -> str | None:
 
 
 def retrieve(store, geo: GeoIP | None, payload, req: Request, scan_time: datetime, config: dict,
-             now: datetime | None = None) -> Retrieved:
+             now: datetime | None = None, integrity: Integrity | None = None) -> Retrieved:
     started = time.perf_counter()
     now = now or datetime.now(timezone.utc)
     install = payload.context_keys.install_id
     dev, app, ctx = payload.device, payload.app, payload.device_context
-    sig: dict = {}
-    evidence: list[tuple[str, str]] = []
+    att = integrity or Integrity()
+    sig: dict = dict(att.signals)            # F001-F010, F025, F317, F321, F364 from integrity.py
+    evidence: list[tuple[str, str]] = list(att.evidence)
 
     # ---- request and geo ----
     ip = geo.lookup(req.client_ip) if geo else None
@@ -143,7 +189,9 @@ def retrieve(store, geo: GeoIP | None, payload, req: Request, scan_time: datetim
     sensor_sig = sensor_signature(payload.signals)
     keys = {"asn": ip.asn if ip else None, "sensor_sig": sensor_sig,
             "android_id_hash": ctx.android_id_hash if ctx else None,
-            "header_hash": header_hash(req.header_names), "ja3": req.ja3, "device_context": ctx.model_dump() if ctx else None}
+            "header_hash": header_hash(req.header_names), "ja3": req.ja3, "device_context": ctx.model_dump() if ctx else None,
+            "attestation": att.summary, "attest_key_fp": att.key_fp, "attest_ca_fp": att.ca_fp, "nonce": att.nonce,
+            "assurance": att.assurance}
 
     if ip:
         if ip.asn_type:
@@ -162,6 +210,12 @@ def retrieve(store, geo: GeoIP | None, payload, req: Request, scan_time: datetim
                         evidence.append(("C", "CX_COUNTRY_MISMATCH"))
                 if ctx and ctx.locale_country:
                     sig["F291"] = ip.country.lower() != ctx.locale_country
+                if ctx and ctx.timezone:
+                    fits = timezone_fits_country(ctx.timezone, ip.country, now)
+                    if fits is not None:
+                        sig["F290"] = not fits
+                        if not fits:
+                            evidence.append(("C", "CX_TIMEZONE_MISMATCH"))
             if ip.tor_exit is not None:
                 sig["F293"] = ip.tor_exit
                 if ip.tor_exit:
@@ -174,6 +228,8 @@ def retrieve(store, geo: GeoIP | None, payload, req: Request, scan_time: datetim
         evidence.append(("C", "CX_PROXY_HEADERS"))
     if req.ja3:
         sig["F296"] = req.ja3
+    if req.rtt_ms is not None:
+        sig["F302"] = req.rtt_ms
     if keys["header_hash"]:
         sig["F298"] = keys["header_hash"]
     m = _UA.search(req.user_agent or "")
@@ -189,7 +245,9 @@ def retrieve(store, geo: GeoIP | None, payload, req: Request, scan_time: datetim
 
     # ---- database: one round trip ----
     look = store.lookup(LookupQuery(install_id=install, now=now, net24=net, asn=keys["asn"],
-                                    sensor_sig=sensor_sig, android_id_hash=keys["android_id_hash"]))
+                                    sensor_sig=sensor_sig, android_id_hash=keys["android_id_hash"],
+                                    attest_key_fp=att.key_fp, attest_ca_fp=att.ca_fp, nonce=att.nonce,
+                                    ja3=req.ja3, app_version=app.version_code, sdk_int=dev.sdk_int))
     prior = look.history
     times = [_t(r["received_at"]) for r in prior]  # newest first
     summary = {"sessions_seen": len(prior), "first_seen": None, "last_seen": None,
@@ -253,6 +311,45 @@ def retrieve(store, geo: GeoIP | None, payload, req: Request, scan_time: datetim
             seq = [n for n in reversed(day) if n] + [ctx.network_type]
             sig["F303"] = sum(1 for a, b in zip(seq, seq[1:]) if a != b)
 
+    # ---- attestation across sessions and installs ----
+    if att.present:
+        if look.nonce_uses:                         # replay: this nonce was already used
+            sig["F364"] = False
+            evidence.append(("B", "AT_NONCE_INVALID"))
+            keys["assurance"] = "failed"
+            if keys["attestation"] is not None:
+                keys["attestation"] = {**keys["attestation"], "nonce_reused": True}
+        cur = att.summary or {}
+        attested = [r for r in prior if r.get("attestation")]
+        trusted = [r for r in attested if (r["attestation"] or {}).get("root_trusted") and (r["attestation"] or {}).get("chain_valid")]
+        if att.trustworthy and trusted:
+            last_t = trusted[0]["attestation"]
+            sig["F307"] = last_t.get("verified_boot_state") == "Verified" and cur.get("verified_boot_state") != "Verified"
+            if sig["F307"]:
+                evidence.append(("B", "AT_BOOT_REGRESSED"))
+            if last_t.get("device_locked") is not None and cur.get("device_locked") is not None:
+                sig["F308"] = last_t["device_locked"] != cur["device_locked"]
+                if sig["F308"]:
+                    evidence.append(("C", "AT_LOCK_STATE_CHANGED"))
+        if attested:
+            sig["F318"] = (attested[0]["attestation"] or {}).get("ca_fp") != att.ca_fp
+        if att.key_fp:
+            month = [r.get("key_fp") for r, t in zip(prior, times) if r.get("key_fp") and now - t < timedelta(days=30)]
+            seq = list(reversed(month)) + [att.key_fp]
+            sig["F316"] = sum(1 for a, b in zip(seq, seq[1:]) if a != b)      # key changes in 30 days
+            sig["F320"] = len({r.get("key_fp") for r in prior if r.get("key_fp")} | {att.key_fp})
+            sig["F324"] = look.key_other_installs_24h + 1                  # installs presenting this key in 24 h
+            if sig["F324"] > 1:
+                evidence.append(("B", "AT_KEY_SHARED"))
+            if keys["android_id_hash"]:
+                sig["F319"] = look.aid_other_keys_30d > 0   # this phone had another key: app reinstalled / key regenerated
+        if att.ca_fp:
+            sig["F337"] = look.ca_other_installs_7d + 1     # installs whose key came from the same attestation cert
+
+    # TLS fingerprint against its cohort (same app version + Android SDK)
+    if req.ja3 and look.cohort_sessions_30d >= JA3_COHORT_MIN:
+        sig["F297"] = round(look.cohort_ja3_sessions_30d / look.cohort_sessions_30d, 3)   # low = unusual client
+
     # network and device counts from the database
     if net:
         same_net_before = any(net24(r.get("client_ip")) == net and now - _t(r["received_at"]) < timedelta(days=1) for r in prior)
@@ -309,7 +406,15 @@ def retrieve(store, geo: GeoIP | None, payload, req: Request, scan_time: datetim
     for fid, reason in BACKEND_SIGNALS.items():
         if fid in sig or fid == "F333":   # F333 is filled in after the model runs
             continue
-        if fid in ("F286", "F288", "F289", "F291", "F293", "F294", "F340") and ip and ip.scope != "public":
+        if fid in att.not_computed:
+            reason = att.not_computed[fid]
+        elif att.present and fid in ("F307", "F308", "F318"):
+            reason = NO_ATTEST_HISTORY if not prior or fid == "F318" else "needs an earlier session with a trusted attestation chain"
+        elif att.present and fid == "F319":
+            reason = NO_CONTEXT
+        elif fid == "F297" and req.ja3:
+            reason = f"needs {JA3_COHORT_MIN}+ sessions with a TLS fingerprint in this app version + Android cohort"
+        elif fid in ("F286", "F288", "F289", "F290", "F291", "F293", "F294", "F340") and ip and ip.scope != "public":
             reason = NO_PUBLIC_IP
         elif fid in ("F289", "F291") and ip and ip.scope == "public" and geo and geo.countries is not None:
             reason = NO_CONTEXT

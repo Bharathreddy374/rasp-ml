@@ -1,6 +1,7 @@
-"""HTTP layer. Five endpoints, nothing else.
+"""HTTP layer. Six endpoints, nothing else.
 
   GET  /health               liveness + database + model status                (open)
+  GET  /v1/challenge         a fresh server nonce for key attestation          (COLLECT_API_KEY if set)
   POST /v1/collect           receive a rasp_collect_v2 payload, run the pipeline,
                              store everything, return the decision             (COLLECT_API_KEY if set)
   GET  /v1/sessions/{id}     one stored session: payload, retrievals, result   (admin)
@@ -8,6 +9,10 @@
   GET  /v1/model             model card: features, thresholds, evaluation      (admin)
 
 Admin endpoints return 403 until ADMIN_TOKEN is set; send it as `X-Admin-Token`.
+
+Edge headers (X-Ja3-Hash, X-Client-Rtt-Ms) are only trusted when EDGE_SECRET is set and the
+request carries the same value in X-Edge-Secret, i.e. it came through our own edge worker
+(edge/cloudflare-worker.js). Without that, a client could send any value.
 The pipeline itself is in trustpoc/pipeline.py; this module only does I/O, limits and auth.
 """
 import hmac
@@ -23,6 +28,8 @@ from fastapi import FastAPI, Header, HTTPException, Query, Request
 from fastapi.concurrency import run_in_threadpool
 from pydantic import ValidationError
 
+from .attestation import TrustStore
+from .integrity import Challenger
 from .pipeline import Pipeline
 from .geo import GeoIP, scope_of
 from .retrieval import PROXY_HEADERS, Request as RequestFacts
@@ -33,6 +40,7 @@ from .store import MemoryStore, PostgresStore, Store, StoreError
 log = logging.getLogger("trustpoc")
 BASE = Path(__file__).resolve().parent.parent
 DEFAULT_CONFIG = {"expected_cert_sha256": [], "release_manifests": []}
+EDGE_HEADERS = ("x-edge-secret", "x-ja3-hash", "x-client-rtt-ms")
 
 
 @dataclass
@@ -45,6 +53,7 @@ class Settings:
     ml_mode: str = "enforce"                # enforce | shadow
     trust_proxy: bool = False
     max_body_kb: int = 256
+    edge_secret: str = ""
     data_dir: Path = BASE / "data"
     config_path: Path = BASE / "config.json"
 
@@ -55,7 +64,7 @@ class Settings:
             store=e("STORE", "postgres"), database_url=e("DATABASE_URL", ""), db_schema=e("DB_SCHEMA", "public"),
             admin_token=e("ADMIN_TOKEN", ""), collect_api_key=e("COLLECT_API_KEY", ""),
             ml_mode=e("ML_MODE", "enforce"), trust_proxy=e("TRUST_PROXY", "0") == "1",
-            max_body_kb=int(e("MAX_BODY_KB", "256")),
+            max_body_kb=int(e("MAX_BODY_KB", "256")), edge_secret=e("EDGE_SECRET", ""),
         )
 
 
@@ -108,13 +117,24 @@ def forwarded_client(header: str) -> str | None:
     return hops[-1] if hops and scope_of(hops[-1]) != "invalid" else None
 
 
+def _rtt(value: str | None) -> float | None:
+    try:
+        v = float(value) if value else None
+    except ValueError:
+        return None
+    return v if v is not None and 0 <= v < 60000 else None
+
+
 def create_app(settings: Settings | None = None, store: Store | None = None,
-               model: ModelService | None = None) -> FastAPI:
+               model: ModelService | None = None, trust: TrustStore | None = None,
+               challenger: Challenger | None = None) -> FastAPI:
     s = settings or Settings.from_env()
     store = store or build_store(s)
     model = model or ModelService(s.data_dir, s.ml_mode)
     geo = GeoIP(s.data_dir / "geo")
-    pipeline = Pipeline(store, model, load_config(s.config_path), geo)
+    trust = trust or TrustStore(s.data_dir / "attestation_roots")
+    challenger = challenger or Challenger()
+    pipeline = Pipeline(store, model, load_config(s.config_path), geo, trust, challenger)
 
     @asynccontextmanager
     async def lifespan(_app: FastAPI):
@@ -148,10 +168,18 @@ def create_app(settings: Settings | None = None, store: Store | None = None,
             raise HTTPException(503, body)
         return body
 
-    @app.post("/v1/collect")
-    async def collect(request: Request, x_api_key: str | None = Header(default=None)):
+    def require_key(x_api_key: str | None) -> None:
         if s.collect_api_key and not (x_api_key and hmac.compare_digest(x_api_key, s.collect_api_key)):
             raise HTTPException(401, "invalid or missing X-Api-Key")
+
+    @app.get("/v1/challenge")
+    def challenge(x_api_key: str | None = Header(default=None)):
+        require_key(x_api_key)
+        return {"nonce": challenger.issue(), "expires_in": challenger.ttl_s}
+
+    @app.post("/v1/collect")
+    async def collect(request: Request, x_api_key: str | None = Header(default=None)):
+        require_key(x_api_key)
         raw = await request.body()
         if len(raw) > s.max_body_kb * 1024:
             raise HTTPException(413, f"payload larger than {s.max_body_kb} KB")
@@ -161,15 +189,19 @@ def create_app(settings: Settings | None = None, store: Store | None = None,
             raise HTTPException(422, [{"field": ".".join(str(p) for p in e["loc"]), "problem": e["msg"]}
                                       for e in exc.errors(include_url=False, include_context=False, include_input=False)]) from exc
         names = [k.decode("latin-1").lower() for k, _ in request.headers.raw]
-        added_by_proxy = set(PROXY_HEADERS) | {"x-ja3-hash"} if s.trust_proxy else set()
+        h = request.headers
+        from_edge = bool(s.edge_secret) and hmac.compare_digest(h.get("x-edge-secret", ""), s.edge_secret)
+        added_by_proxy = (set(PROXY_HEADERS) if s.trust_proxy else set()) | (set(EDGE_HEADERS) if from_edge else set())
         facts = RequestFacts(
-            client_ip=client_ip(request), user_agent=request.headers.get("user-agent"), payload_bytes=len(raw),
-            header_names=[n for n in names if n not in added_by_proxy],
+            client_ip=client_ip(request), user_agent=h.get("user-agent"), payload_bytes=len(raw),
+            header_names=[n for n in names if n not in added_by_proxy and n != "x-rasp-signature"],
             # behind a trusted proxy its own headers are expected; otherwise they mean the client used a proxy
             proxy_headers=[] if s.trust_proxy else [n for n in PROXY_HEADERS if n in names],
-            ja3=(request.headers.get("x-ja3-hash") or None) if s.trust_proxy else None)
+            ja3=(h.get("x-ja3-hash") or None) if from_edge else None,
+            rtt_ms=_rtt(h.get("x-client-rtt-ms")) if from_edge else None,
+            signature=h.get("x-rasp-signature") or None)
         try:
-            result = await run_in_threadpool(pipeline.run, payload, facts)
+            result = await run_in_threadpool(pipeline.run, payload, facts, raw)
         except StoreError as exc:
             log.error("storage failed: %s", exc)
             # Nothing was stored, so the client may retry the same session_id safely.

@@ -2,7 +2,9 @@ package com.example.demo.features.network
 
 import android.content.Context
 import android.util.Base64
+import com.example.demo.BuildConfig
 import com.example.demo.features.attestation.AttestationSession
+import com.example.demo.features.attestation.InstallKey
 import com.example.demo.features.scanner.FeatureCatalogueScanner
 import com.example.demo.features.scanner.ScanSummary
 import kotlinx.coroutines.Dispatchers
@@ -34,6 +36,8 @@ data class ModelResult(
     val riskScore: Int? = null,
     /** One line from the model: anomaly percentile and the strongest threat head. */
     val modelSummary: String? = null,
+    /** attested | unverified | failed: how far the backend could verify that this request came from this app on this device. */
+    val assurance: String? = null,
 )
 
 data class ApiResponse(
@@ -79,11 +83,12 @@ object BackendApiClient {
             .edit().putString(KEY_API_URL, normalizeBaseUrl(url)).apply()
     }
 
-    /** The team's deployed collector (Render). Fixed: there is nothing for the user to type. */
-    const val COLLECTOR_URL = "https://rasp-ml-collector.onrender.com/v1/collect"
+    /** The team's deployed collector (Render); debug builds may point elsewhere (-PdevCollectorUrl). Nothing to type. */
+    val COLLECTOR_URL: String = BuildConfig.COLLECTOR_URL
 
     /**
-     * Scans and POSTs a rasp_collect_v2 payload (plain JSON, unsigned) to [url].
+     * Gets a server nonce, scans, and POSTs a rasp_collect_v2 payload to [url], signed with the
+     * install's attested key. If the challenge or the keystore fails, sends it unsigned instead.
      * Returns the fresh scan together with the collector's answer.
      */
     suspend fun sendCollect(
@@ -93,16 +98,40 @@ object BackendApiClient {
     ): Pair<ScanSummary?, ApiResponse> = withContext(Dispatchers.IO) {
         val t0 = System.currentTimeMillis()
         try {
+            val target = url.trim()
+            val host = URL(target).host
+            // 1. challenge + install key (also wakes a sleeping Render instance before the scan)
+            var key: InstallKey.Material? = null
+            var attestation: JSONObject? = null
+            try {
+                val (c, t) = request("GET", target.substringBefore("/v1/collect") + "/v1/challenge", null)
+                if (c in 200..299) {
+                    val nonce = JSONObject(t).getString("nonce")
+                    val k = InstallKey.get(host, Base64.decode(nonce, Base64.DEFAULT))
+                    key = k
+                    attestation = JSONObject().put("nonce", nonce)
+                        .put("chain", JSONArray().apply { k.chain.forEach { put(b64(it)) } })
+                }
+            } catch (_: Exception) {
+                key = null    // older collector or no usable keystore: send unattested
+                attestation = null
+            }
+            // 2. scan, build, sign the exact bytes that are sent
             val summary = FeatureCatalogueScanner.scanAll(context)
-            val body = CollectPayload.build(context, summary, action).toByteArray(Charsets.UTF_8)
-            val (code, text) = postJson(url.trim(), body, gzip = false)
+            val body = CollectPayload.build(context, summary, action, attestation).toByteArray(Charsets.UTF_8)
+            val signature = key?.let { runCatching { b64(it.sign(body)) }.getOrNull() }
+            val (code, text) = request("POST", target, body,
+                signature?.let { mapOf("X-Rasp-Signature" to it) } ?: emptyMap())
             val ok = code in 200..299
+            val result = if (ok) parseResult(text)?.takeIf { it.level in 1..5 } else null
+            // A key made for a challenge this server does not recognise (its secret changed) can never
+            // attest again: drop it, the next send makes a new one.
+            if (result?.attestation?.optBoolean("challenge_issued_here", true) == false) InstallKey.reset(host)
             summary to ApiResponse(
-                isSuccess = ok, statusCode = code, responseBody = text,
-                result = if (ok) parseResult(text)?.takeIf { it.level in 1..5 } else null,
+                isSuccess = ok, statusCode = code, responseBody = text, result = result,
                 errorMessage = if (ok) null else "Collector returned HTTP $code: ${detailOf(text)}",
                 durationMs = System.currentTimeMillis() - t0,
-                payloadBytes = body.size, wireBytes = body.size, attested = false,
+                payloadBytes = body.size, wireBytes = body.size, attested = result?.assurance == "attested",
             )
         } catch (e: Exception) {
             null to ApiResponse(
@@ -189,20 +218,25 @@ object BackendApiClient {
         }
     }
 
-    private fun postJson(url: String, body: ByteArray, gzip: Boolean): Pair<Int, String> {
+    private fun postJson(url: String, body: ByteArray, gzip: Boolean): Pair<Int, String> =
+        request("POST", url, body, if (gzip) mapOf("Content-Encoding" to "gzip") else emptyMap())
+
+    private fun request(method: String, url: String, body: ByteArray?, headers: Map<String, String> = emptyMap()): Pair<Int, String> {
         val conn = (URL(url).openConnection() as HttpURLConnection).apply {
-            requestMethod = "POST"
-            doOutput = true
+            requestMethod = method
             // A free Render instance that went to sleep needs up to ~1 min to wake up.
             connectTimeout = 30000
             readTimeout = 90000
-            setRequestProperty("Content-Type", "application/json; charset=utf-8")
             setRequestProperty("Accept", "application/json")
-            if (gzip) setRequestProperty("Content-Encoding", "gzip")
-            setFixedLengthStreamingMode(body.size)
+            headers.forEach { (k, v) -> setRequestProperty(k, v) }
+            if (body != null) {
+                doOutput = true
+                setRequestProperty("Content-Type", "application/json; charset=utf-8")
+                setFixedLengthStreamingMode(body.size)
+            }
         }
         try {
-            conn.outputStream.use { it.write(body) }
+            if (body != null) conn.outputStream.use { it.write(body) }
             val code = conn.responseCode
             val stream = if (code in 200..299) conn.inputStream else (conn.errorStream ?: conn.inputStream)
             val text = stream?.bufferedReader(Charsets.UTF_8)?.use { it.readText() } ?: ""
@@ -262,7 +296,7 @@ object BackendApiClient {
             mlLevel = if (d.isNull("ml_level")) null else d.optInt("ml_level"),
             reasons = reasons,
             decisionId = json.optString("id", ""),
-            attestation = null,
+            attestation = d.optJSONObject("attestation"),
             serverSignals = serverSignals,
             coverage = JSONObject()
                 .put("device_signals", cov?.optInt("signals_received") ?: 0)
@@ -271,6 +305,7 @@ object BackendApiClient {
             serverMs = json.optJSONObject("timings_ms")?.optDouble("total", 0.0) ?: 0.0,
             riskScore = if (d.isNull("risk_score")) null else d.optInt("risk_score"),
             modelSummary = modelSummary,
+            assurance = d.optString("assurance").ifEmpty { null },
         )
     } catch (_: Exception) {
         null

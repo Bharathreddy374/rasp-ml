@@ -26,14 +26,17 @@ import java.util.UUID
  *   "device_context": { "sim_country", "network_country", "timezone", "locale", "network_type",
  *                       "boot_count", "uptime_ms", "android_id_hash" },     optional, see DeviceContext
  *   "signals": { "F016": 0, "F018": ["release-keys", 0], ..., "battery_temp_c": 28.2 },
- *   "unknown": [ ... ], "failed_groups": [ ... ]
+ *   "unknown": [ ... ], "failed_groups": [ ... ],
+ *   "attestation": { "nonce", "chain": [leaf, ..., root] }       optional, see InstallKey
  * }
  *
  * Signals listed in [PAIR_IDS] are sent as [value, risk] (risk 0 SAFE, 1 INFO, 2 SUSPICIOUS,
  * 3 ALERT); all others as the bare value. Placeholder probes go to "unknown".
  *
- * This payload is NOT signed and carries no nonce or attestation: the receiver cannot tell a
- * real device from a forged or replayed request. Use it for data collection, not decisions.
+ * When the keystore can make an attested key, the body also carries the server nonce and the
+ * install key's certificate chain, and is signed with that key (header X-Rasp-Signature), so the
+ * backend can tell a real device and app from a forged or replayed request. Without it the
+ * backend marks the session "unverified".
  */
 object CollectPayload {
 
@@ -50,7 +53,7 @@ object CollectPayload {
         "F139", "F140", "F141", "F142", "F143", "F166", "F257", "F278", "F279", "F280", "F282",
     )
 
-    fun build(context: Context, summary: ScanSummary, action: String): String {
+    fun build(context: Context, summary: ScanSummary, action: String, attestation: JSONObject? = null): String {
         val signals = JSONObject()
         val unknown = JSONArray()
         for (s in summary.signals) {
@@ -85,6 +88,7 @@ object CollectPayload {
             .put("signals", signals)
             .put("unknown", unknown)
             .put("failed_groups", JSONArray(summary.failedGroups))
+            .apply { attestation?.let { put("attestation", it) } }
             .toString()
     }
 

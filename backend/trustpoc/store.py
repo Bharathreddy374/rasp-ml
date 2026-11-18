@@ -42,6 +42,12 @@ class LookupQuery:
     asn: int | None = None
     sensor_sig: str | None = None
     android_id_hash: str | None = None
+    attest_key_fp: str | None = None
+    attest_ca_fp: str | None = None
+    nonce: str | None = None
+    ja3: str | None = None
+    app_version: int | None = None
+    sdk_int: int | None = None
     history_limit: int = 200
 
     def graph_keys(self) -> list[str]:
@@ -73,6 +79,12 @@ class LookupResult:
     asn_installs_24h: int = 0       # other installs
     sensor_installs_24h: int = 0    # other installs
     aid_other_installs_30d: int = 0
+    key_other_installs_24h: int = 0     # other installs that presented the same attested key
+    ca_other_installs_7d: int = 0       # other installs whose key was issued by the same attestation cert
+    aid_other_keys_30d: int = 0         # other attested keys seen with the same Android ID
+    nonce_uses: int = 0                 # earlier sessions that used this request's nonce
+    cohort_sessions_30d: int = 0        # sessions of the same app version + Android SDK with a TLS fingerprint
+    cohort_ja3_sessions_30d: int = 0    # ... of which had this request's TLS fingerprint
     graph: Graph = field(default_factory=Graph)
 
 
@@ -132,6 +144,17 @@ stats AS (
       (SELECT count(DISTINCT install_id) FROM collect_sessions WHERE sensor_sig = %s AND install_id <> %s AND received_at >= %s) AS sensor_installs_24h,
       (SELECT count(DISTINCT install_id) FROM collect_sessions
         WHERE android_id_hash = %s AND install_id <> %s AND received_at >= %s) AS aid_other_installs_30d,
+      (SELECT count(DISTINCT install_id) FROM collect_sessions
+        WHERE attest_key_fp = %s AND install_id <> %s AND received_at >= %s) AS key_other_installs_24h,
+      (SELECT count(DISTINCT install_id) FROM collect_sessions
+        WHERE attest_ca_fp = %s AND install_id <> %s AND received_at >= %s) AS ca_other_installs_7d,
+      (SELECT count(DISTINCT attest_key_fp) FROM collect_sessions
+        WHERE android_id_hash = %s AND attest_key_fp <> %s AND received_at >= %s) AS aid_other_keys_30d,
+      (SELECT count(*) FROM collect_sessions WHERE nonce = %s) AS nonce_uses,
+      (SELECT count(*) FROM collect_sessions WHERE app_version = %s AND (device ->> 'sdk_int')::int = %s
+        AND ja3 IS NOT NULL AND received_at >= %s) AS cohort_sessions_30d,
+      (SELECT count(*) FROM collect_sessions WHERE app_version = %s AND (device ->> 'sdk_int')::int = %s
+        AND ja3 = %s AND received_at >= %s) AS cohort_ja3_sessions_30d,
       (SELECT count(*) FROM latest) AS g_members,
       (SELECT count(*) FROM latest WHERE reasons @> '[{"code": "EM_EMULATOR"}]') AS g_emulator,
       (SELECT count(*) FROM latest l JOIN firsts f ON f.install_id = l.install_id WHERE f.first_seen >= %s) AS g_new,
@@ -140,6 +163,7 @@ stats AS (
 )
 SELECT stats.*, h.* FROM stats LEFT JOIN (
     SELECT s.received_at, s.scan_time, s.client_ip, s.app_version, s.device, s.device_context AS context,
+           s.attestation, s.attest_key_fp AS key_fp,
            s.signals -> 'F067' AS kernel, r.final_level,
            COALESCE(jsonb_array_length(r.reasons), 0) AS reason_count,
            (r.ml ->> 'anomaly_pct')::float AS anomaly_pct
@@ -150,9 +174,11 @@ ORDER BY h.received_at DESC NULLS LAST
 """
 
 _STAT_KEYS = ("net_installs_24h", "net_new_installs_24h", "net_sessions_30d", "net_risky_sessions_30d",
-              "asn_installs_24h", "sensor_installs_24h", "aid_other_installs_30d")
+              "asn_installs_24h", "sensor_installs_24h", "aid_other_installs_30d", "key_other_installs_24h",
+              "ca_other_installs_7d", "aid_other_keys_30d", "nonce_uses", "cohort_sessions_30d",
+              "cohort_ja3_sessions_30d")
 _HISTORY_KEYS = ("received_at", "scan_time", "client_ip", "app_version", "device", "context", "kernel",
-                 "final_level", "reason_count", "anomaly_pct")
+                 "attestation", "key_fp", "final_level", "reason_count", "anomaly_pct")
 
 
 class PostgresStore:
@@ -282,6 +308,12 @@ class PostgresStore:
             q.asn, q.install_id, d1,                  # asn_installs_24h (other installs)
             q.sensor_sig, q.install_id, d1,           # sensor_installs_24h (other installs)
             q.android_id_hash, q.install_id, d30,     # aid_other_installs_30d
+            q.attest_key_fp, q.install_id, d1,        # key_other_installs_24h
+            q.attest_ca_fp, q.install_id, d7,         # ca_other_installs_7d
+            q.android_id_hash, q.attest_key_fp, d30,  # aid_other_keys_30d
+            q.nonce,                                  # nonce_uses
+            q.app_version, q.sdk_int, d30,            # cohort_sessions_30d
+            q.app_version, q.sdk_int, q.ja3, d30,     # cohort_ja3_sessions_30d
             d1,                                       # g_new
             q.install_id, q.history_limit,            # history
         )
@@ -327,10 +359,12 @@ class PostgresStore:
                 INSERT INTO collect_sessions
                   (id, install_id, session_id, scan_time, action, client_ip, net24, user_agent,
                    payload_bytes, app_version, device, app, signals, unknown, failed_groups,
-                   device_context, asn, sensor_sig, android_id_hash, header_hash, ja3)
+                   device_context, asn, sensor_sig, android_id_hash, header_hash, ja3,
+                   attestation, attest_key_fp, attest_ca_fp, nonce, assurance)
                 VALUES (%s::uuid, %s, %s, %s, %s, %s, %s, %s, %s, %s,
                         %s::jsonb, %s::jsonb, %s::jsonb, %s::jsonb, %s::jsonb,
-                        %s::jsonb, %s, %s, %s, %s, %s)
+                        %s::jsonb, %s, %s, %s, %s, %s,
+                        %s::jsonb, %s, %s, %s, %s)
             ), r AS (
                 INSERT INTO session_retrievals (session_id, server_signals, not_computed, history, checks, retrieval_ms)
                 VALUES (%s::uuid, %s::jsonb, %s::jsonb, %s::jsonb, %s::jsonb, %s)
@@ -348,6 +382,8 @@ class PostgresStore:
              None if session.get("device_context") is None else _j(session["device_context"]),
              session.get("asn"), session.get("sensor_sig"),
              session.get("android_id_hash"), session.get("header_hash"), session.get("ja3"),
+             None if session.get("attestation") is None else _j(session["attestation"]),
+             session.get("attest_key_fp"), session.get("attest_ca_fp"), session.get("nonce"), session.get("assurance"),
              pk, _j(retrieved["server_signals"]), _j(retrieved.get("not_computed") or {}), _j(retrieved["history"]), _j(retrieved["checks"]),
              retrieved["retrieval_ms"],
              pk, result["rules_level"], result["ml_level"], result["final_level"], result.get("risk_score"), result["label"],
@@ -447,6 +483,23 @@ class MemoryStore:
         if q.android_id_hash:
             out.aid_other_installs_30d = len(installs(lambda r: s(r).get("android_id_hash") == q.android_id_hash
                                                       and s(r)["install_id"] != q.install_id and s(r)["received_at"] >= d30))
+        if q.attest_key_fp:
+            out.key_other_installs_24h = len(installs(lambda r: s(r).get("attest_key_fp") == q.attest_key_fp
+                                                      and s(r)["install_id"] != q.install_id and s(r)["received_at"] >= d1))
+        if q.attest_ca_fp:
+            out.ca_other_installs_7d = len(installs(lambda r: s(r).get("attest_ca_fp") == q.attest_ca_fp
+                                                    and s(r)["install_id"] != q.install_id and s(r)["received_at"] >= d7))
+        if q.android_id_hash and q.attest_key_fp:
+            out.aid_other_keys_30d = len({s(r).get("attest_key_fp") for r in rows
+                                          if s(r).get("android_id_hash") == q.android_id_hash and s(r).get("attest_key_fp")
+                                          and s(r)["attest_key_fp"] != q.attest_key_fp and s(r)["received_at"] >= d30})
+        if q.nonce:
+            out.nonce_uses = sum(1 for r in rows if s(r).get("nonce") == q.nonce)
+        if q.app_version is not None and q.sdk_int is not None:
+            cohort = [r for r in rows if s(r)["app_version"] == q.app_version and s(r)["device"].get("sdk_int") == q.sdk_int
+                      and s(r).get("ja3") and s(r)["received_at"] >= d30]
+            out.cohort_sessions_30d = len(cohort)
+            out.cohort_ja3_sessions_30d = sum(1 for r in cohort if s(r)["ja3"] == q.ja3)
 
         # device graph: breadth-first walk over shared keys, same rules as the SQL
         edges: dict[str, set] = {}
@@ -480,6 +533,7 @@ class MemoryStore:
         out.history = [{"received_at": s(r)["received_at"].isoformat(), "scan_time": s(r)["scan_time"].isoformat(),
                         "client_ip": s(r)["client_ip"], "app_version": s(r)["app_version"], "device": s(r)["device"],
                         "context": s(r).get("device_context"), "kernel": s(r)["signals"].get("F067"),
+                        "attestation": s(r).get("attestation"), "key_fp": s(r).get("attest_key_fp"),
                         "final_level": r["result"]["final_level"], "reason_count": len(r["result"]["reasons"]),
                         "anomaly_pct": (r["result"].get("ml") or {}).get("anomaly_pct")}
                        for r in mine[:q.history_limit]]

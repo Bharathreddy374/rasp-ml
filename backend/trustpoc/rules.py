@@ -56,6 +56,19 @@ REASONS = {
     "CX_PROXY_HEADERS": "Request carried proxy headers.",
     "CX_COUNTRY_MISMATCH": "IP country differs from the SIM country.",
     "GR_FARM_CLUSTER": "This install belongs to a cluster of related installs that looks like a device farm.",
+    # attestation and payload integrity
+    "AT_SIGNATURE_INVALID": "The payload signature does not verify with the attested key.",
+    "AT_NONCE_INVALID": "The request's nonce was not issued by this server, has expired, or was reused.",
+    "AT_UNTRUSTED_CHAIN": "The key attestation chain does not lead to a Google root.",
+    "AT_REVOKED": "A certificate in the attestation chain has been revoked by Google.",
+    "AT_BOOTLOADER_UNLOCKED": "Hardware attestation reports an unlocked bootloader or unverified boot.",
+    "AT_APP_CERT_MISMATCH": "The attested app signing certificate is not the release certificate.",
+    "AT_PACKAGE_MISMATCH": "The attested package name is not this app.",
+    "AT_KEY_SHARED": "The same attested key was used by more than one install.",
+    "AT_BOOT_REGRESSED": "Verified boot was green for this install before and is not now.",
+    "AT_SOFTWARE_KEY": "The install key is software-backed, not in secure hardware.",
+    "AT_PROPS_MISMATCH": "The device's Android version or patch level disagrees with its hardware attestation.",
+    "AT_LOCK_STATE_CHANGED": "The bootloader lock state changed since this install's last session.",
     # ML
     "ML_RISK": "The ML model scored a higher risk than the rules.",
 }
@@ -67,6 +80,11 @@ FAMILY = {
     "RT_FRIDA": "instrumentation", "RT_TRACER_ATTACHED": "instrumentation", "RT_XPOSED": "instrumentation",
     "RT_CODE_PATCHED": "instrumentation", "EM_EMULATOR": "virtual", "AP_CLONED_APP": "app",
     "AP_CERT_INCONSISTENT": "app", "AP_CODE_MISMATCH": "app", "AP_CERT_MISMATCH": "app",
+    # attestation: a forged or replayed request counts once, however many checks fail
+    "AT_SIGNATURE_INVALID": "integrity", "AT_NONCE_INVALID": "integrity", "AT_UNTRUSTED_CHAIN": "integrity",
+    "AT_REVOKED": "integrity", "AT_KEY_SHARED": "integrity",
+    "AT_BOOTLOADER_UNLOCKED": "root", "AT_BOOT_REGRESSED": "root",
+    "AT_APP_CERT_MISMATCH": "app", "AT_PACKAGE_MISMATCH": "app",
 }
 
 ROOT_MANAGER_PACKAGES = {

@@ -21,7 +21,7 @@ class ApiTest(unittest.TestCase):
         app, _ = make()
         routes = {(m, r.path) for r in app.routes if hasattr(r, "methods") for m in r.methods if m not in ("HEAD", "OPTIONS")}
         self.assertEqual(routes - {("GET", "/docs"), ("GET", "/redoc"), ("GET", "/openapi.json"), ("GET", "/docs/oauth2-redirect")}, {
-            ("GET", "/health"), ("POST", "/v1/collect"), ("GET", "/v1/sessions/{pk}"),
+            ("GET", "/health"), ("GET", "/v1/challenge"), ("POST", "/v1/collect"), ("GET", "/v1/sessions/{pk}"),
             ("GET", "/v1/sessions"), ("GET", "/v1/model")})
 
     def test_health(self):

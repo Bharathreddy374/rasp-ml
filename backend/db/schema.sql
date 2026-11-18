@@ -73,6 +73,16 @@ ALTER TABLE collect_sessions ADD COLUMN IF NOT EXISTS android_id_hash TEXT;    -
 ALTER TABLE collect_sessions ADD COLUMN IF NOT EXISTS header_hash     TEXT;    -- order of HTTP header names (F298)
 ALTER TABLE collect_sessions ADD COLUMN IF NOT EXISTS ja3             TEXT;    -- TLS fingerprint from a trusted edge proxy (F296)
 ALTER TABLE session_retrievals ADD COLUMN IF NOT EXISTS not_computed JSONB;  -- {signal: reason} for backend signals not computed
+-- Key attestation of the app's install key (F001-F010, F307/F308, F316-F324, F337, F364).
+ALTER TABLE collect_sessions ADD COLUMN IF NOT EXISTS attestation     JSONB;   -- verified chain summary (security level, boot state, ...)
+ALTER TABLE collect_sessions ADD COLUMN IF NOT EXISTS attest_key_fp   TEXT;    -- SHA-256 of the attested install key
+ALTER TABLE collect_sessions ADD COLUMN IF NOT EXISTS attest_ca_fp    TEXT;    -- SHA-256 of the certificate that issued it
+ALTER TABLE collect_sessions ADD COLUMN IF NOT EXISTS nonce           TEXT;    -- server challenge used by this request
+ALTER TABLE collect_sessions ADD COLUMN IF NOT EXISTS assurance       TEXT;    -- attested | unverified | failed
+CREATE INDEX IF NOT EXISTS collect_sessions_key_idx   ON collect_sessions (attest_key_fp, received_at DESC);
+CREATE INDEX IF NOT EXISTS collect_sessions_ca_idx    ON collect_sessions (attest_ca_fp, received_at DESC);
+CREATE INDEX IF NOT EXISTS collect_sessions_nonce_idx ON collect_sessions (nonce);
+CREATE INDEX IF NOT EXISTS collect_sessions_ja3_idx   ON collect_sessions (app_version, ja3, received_at DESC);
 CREATE INDEX IF NOT EXISTS collect_sessions_aid_idx    ON collect_sessions (android_id_hash, received_at DESC);
 CREATE INDEX IF NOT EXISTS collect_sessions_sensor_idx ON collect_sessions (sensor_sig, received_at DESC);
 CREATE INDEX IF NOT EXISTS collect_sessions_asn_idx    ON collect_sessions (asn, received_at DESC);
