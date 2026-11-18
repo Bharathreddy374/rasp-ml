@@ -21,8 +21,8 @@ android {
         applicationId = "com.example.demo"
         minSdk = 24
         targetSdk = 37
-        versionCode = 2
-        versionName = "1.1"
+        versionCode = 3
+        versionName = "1.2"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         // Release builds must talk to the backend over HTTPS only.

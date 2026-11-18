@@ -79,20 +79,8 @@ object BackendApiClient {
             .edit().putString(KEY_API_URL, normalizeBaseUrl(url)).apply()
     }
 
-    private const val KEY_COLLECTOR_URL = "collector_url"
-
-    /** The team's deployed collector (Render). Used until the user saves a different URL. */
-    const val DEFAULT_COLLECTOR_URL = "https://rasp-ml-collector.onrender.com/v1/collect"
-
-    /** Full URL of the external collector that receives rasp_collect_v2 payloads. */
-    fun getCollectorUrl(context: Context): String =
-        context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).getString(KEY_COLLECTOR_URL, null)
-            ?.takeIf { it.isNotBlank() } ?: DEFAULT_COLLECTOR_URL
-
-    fun saveCollectorUrl(context: Context, url: String) {
-        context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-            .edit().putString(KEY_COLLECTOR_URL, url.trim()).apply()
-    }
+    /** The team's deployed collector (Render). Fixed: there is nothing for the user to type. */
+    const val COLLECTOR_URL = "https://rasp-ml-collector.onrender.com/v1/collect"
 
     /**
      * Scans and POSTs a rasp_collect_v2 payload (plain JSON, unsigned) to [url].

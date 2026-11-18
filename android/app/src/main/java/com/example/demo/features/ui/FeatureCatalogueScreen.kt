@@ -772,25 +772,23 @@ fun SendToBackendDialog(
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
 
-    var collectorUrl by remember { mutableStateOf(BackendApiClient.getCollectorUrl(context)) }
     var isSending by remember { mutableStateOf(false) }
     var apiResponse by remember { mutableStateOf<ApiResponse?>(null) }
 
     fun send() {
-        val url = collectorUrl.trim()
-        if (!url.startsWith("http://") && !url.startsWith("https://")) {
-            Toast.makeText(context, "Enter the full collector URL (http:// or https://)", Toast.LENGTH_SHORT).show()
-            return
-        }
-        BackendApiClient.saveCollectorUrl(context, url)
+        if (isSending) return
         isSending = true
+        apiResponse = null
         scope.launch {
-            val (fresh, response) = BackendApiClient.sendCollect(context, url)
+            val (fresh, response) = BackendApiClient.sendCollect(context, BackendApiClient.COLLECTOR_URL)
             fresh?.let(onScanned)
             apiResponse = response
             isSending = false
         }
     }
+
+    // One tap on "Send to API" is enough: the dialog sends as soon as it opens.
+    androidx.compose.runtime.LaunchedEffect(Unit) { send() }
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -801,19 +799,9 @@ fun SendToBackendDialog(
                 verticalArrangement = Arrangement.spacedBy(10.dp)
             ) {
                 Text(
-                    text = "Rescans and POSTs the rasp_collect_v2 payload as plain JSON to the collector. " +
-                        "Unsigned: no nonce or attestation.",
+                    text = "Scans this phone and sends the rasp_collect_v2 payload to the team collector " +
+                        "(${android.net.Uri.parse(BackendApiClient.COLLECTOR_URL).host}).",
                     style = MaterialTheme.typography.bodySmall
-                )
-
-                OutlinedTextField(
-                    value = collectorUrl,
-                    onValueChange = { collectorUrl = it },
-                    label = { Text("Collector URL (full endpoint)") },
-                    placeholder = { Text("https://collector.example.com/collect") },
-                    singleLine = true,
-                    modifier = Modifier.fillMaxWidth(),
-                    shape = RoundedCornerShape(8.dp)
                 )
 
                 if (isSending) {
@@ -826,7 +814,12 @@ fun SendToBackendDialog(
                     ) {
                         CircularProgressIndicator(modifier = Modifier.size(24.dp))
                         Spacer(modifier = Modifier.width(12.dp))
-                        Text("Scanning and sending...", style = MaterialTheme.typography.bodyMedium)
+                        Column {
+                            Text("Scanning and sending...", style = MaterialTheme.typography.bodyMedium)
+                            Text("The first send after a quiet period can take up to a minute.",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
                     }
                 }
 
@@ -835,7 +828,7 @@ fun SendToBackendDialog(
         },
         confirmButton = {
             Button(onClick = { send() }, enabled = !isSending) {
-                Text(if (isSending) "Sending..." else "Send payload")
+                Text(if (isSending) "Sending..." else "Send again")
             }
         },
         dismissButton = {
