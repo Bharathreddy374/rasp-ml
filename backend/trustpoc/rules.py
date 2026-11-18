@@ -59,6 +59,7 @@ REASONS = {
     # attestation and payload integrity
     "AT_SIGNATURE_INVALID": "The payload signature does not verify with the attested key.",
     "AT_NONCE_INVALID": "The request's nonce was not issued by this server, has expired, or was reused.",
+    "AT_CHALLENGE_UNKNOWN": "The install key was created for a challenge this server did not issue (e.g. the server secret changed); the app makes a new key on its next send.",
     "AT_UNTRUSTED_CHAIN": "The key attestation chain does not lead to a Google root.",
     "AT_REVOKED": "A certificate in the attestation chain has been revoked by Google.",
     "AT_BOOTLOADER_UNLOCKED": "Hardware attestation reports an unlocked bootloader or unverified boot.",

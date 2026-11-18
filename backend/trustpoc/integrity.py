@@ -165,6 +165,8 @@ def evaluate(payload, raw_body: bytes, signature_b64: str | None, trust: TrustSt
         out.evidence.append(("B", "AT_SIGNATURE_INVALID"))
     if not fresh:
         out.evidence.append(("B", "AT_NONCE_INVALID"))
+    if not sig["F010"]:
+        out.evidence.append(("C", "AT_CHALLENGE_UNKNOWN"))
     if not (chain.chain_valid and chain.root_trusted):
         out.evidence.append(("B", "AT_UNTRUSTED_CHAIN"))
     if chain.revoked:

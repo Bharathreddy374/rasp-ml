@@ -166,6 +166,15 @@ class AttestationTest(unittest.TestCase):
         self.assertEqual(res["decision"]["assurance"], "failed")
         self.assertTrue({"AT_NONCE_INVALID", "AT_SIGNATURE_INVALID"} <= self.codes(res))
 
+    def test_key_made_for_another_servers_challenge(self):
+        other = Challenger(b"some-other-secret").issue()
+        key, chain = self.pki.install_key(base64.b64decode(other))
+        res = self.send("s1", key, chain)                  # this request's own nonce is fine
+        self.assertIs(res["retrieved"]["server_signals"]["F010"], False)
+        self.assertEqual(res["decision"]["assurance"], "failed")
+        self.assertIn("AT_CHALLENGE_UNKNOWN", self.codes(res))
+        self.assertIs(res["decision"]["attestation"]["challenge_issued_here"], False)
+
     def test_untrusted_root(self):
         other = Pki()
         nonce = self.challenger.issue()
