@@ -60,6 +60,8 @@ class ApiTest(unittest.TestCase):
         from trustpoc.api import forwarded_client
         self.assertEqual(forwarded_client("49.36.10.5"), "49.36.10.5")
         self.assertEqual(forwarded_client("1.2.3.4, 49.36.10.5, 10.0.0.2, 127.0.0.1"), "49.36.10.5")
+        self.assertEqual(forwarded_client("6.6.6.6, 49.238.32.168, 162.158.107.64, 10.24.134.135"), "49.238.32.168")  # Render
+        self.assertEqual(forwarded_client("2001:4860::1, 2606:4700::6810:1, 10.0.0.1"), "2001:4860::1")
         self.assertEqual(forwarded_client("10.0.0.7"), "10.0.0.7")            # all internal: the nearest hop
         self.assertIsNone(forwarded_client(""))
         self.assertIsNone(forwarded_client("garbage"))
