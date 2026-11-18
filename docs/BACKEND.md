@@ -228,6 +228,24 @@ Try it with the real payload:
 curl.exe -X POST http://localhost:8000/v1/collect -H "Content-Type: application/json" --data-binary "@backend/tests/fixtures/genuine_phone.json"
 ```
 
+### Download the dataset
+[tools/download_dataset.py](../backend/tools/download_dataset.py) exports every stored session for ML work. It reads `DATABASE_URL` from `backend/.env`.
+
+```bash
+python tools/download_dataset.py                 # all real sessions -> data/datasets/<UTC time>/
+python tools/download_dataset.py --days 7        # last 7 days
+python tools/download_dataset.py --install <id>  # one phone
+python tools/download_dataset.py --include-test  # also load-test / deployment-check installs
+```
+
+| File | Contents |
+|---|---|
+| `dataset.csv` | One row per session (about 500 columns): session and device info, `ctx_*` device context, **F001–F370** (phone values, or server-computed for F286–F365; booleans 1/0; empty = missing), `F###_risk` (the phone's verdict for pair signals), `mf_*` (the model's 25 input features), and the results (`rules_level`, `ml_level`, `final_level`, `risk_score`, `outcome`, `anomaly_pct`, `head_*` probabilities, `reason_codes`) |
+| `dictionary.csv` | Every column with its group and meaning (catalogue names from [FEATURES.md](FEATURES.md)) |
+| `summary.txt` | Session, install and level counts |
+
+`final_level` is a pseudo-label: rules plus a model trained on synthetic data. Verify sessions (attack lab, confirmed fraud) before using it as ground truth. The output folder is under `backend/data/`, which git ignores.
+
 ## 5. Limits and decisions
 
 | | |
