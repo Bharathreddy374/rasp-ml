@@ -5,6 +5,9 @@ the schema afterwards, so it never touches the real tables:
 
     $env:TEST_DATABASE_URL = "postgresql://user:pass@host/db?sslmode=require"
     python -m unittest tests.test_postgres -v
+
+Use a DIRECT endpoint (Neon: the host without "-pooler"). A transaction-mode pooler does not keep
+the per-connection SET search_path, so the throwaway schema would not be used reliably.
 """
 import json
 import os
@@ -129,3 +132,18 @@ class PostgresTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+@unittest.skipUnless(URL, "set TEST_DATABASE_URL to run")
+class PostgresAttestationTest(__import__("test_attestation").AttestationTest):
+    """The attestation tests again, with the key / CA / nonce / TLS-cohort counts done in SQL."""
+
+    def setUp(self):
+        super().setUp()
+        self.schema = "rasp_test_" + uuid.uuid4().hex[:10]
+        self.store = PostgresStore(URL, self.schema)
+        self.store.migrate()
+        self.pipe.store = self.store
+
+    def tearDown(self):
+        self.store._run(lambda cur: cur.execute(f'DROP SCHEMA "{self.schema}" CASCADE'))

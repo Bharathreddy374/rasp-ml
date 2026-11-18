@@ -14,6 +14,7 @@ server.
       "app": {"version_code"},
       "device_context": {"sim_country", "network_country", "timezone", "locale",       (optional)
                          "network_type", "boot_count", "uptime_ms", "android_id_hash"},
+      "attestation": {"nonce": "<from GET /v1/challenge>", "chain": ["<leaf>", ...]},   (optional)
       "signals": {"F016": 0, "F018": ["release-keys", 0], ..., "battery_temp_c": 32.8},
       "unknown": ["F034", ...],
       "failed_groups": []
@@ -129,6 +130,22 @@ class DeviceContext(BaseModel):
         return region.lower() if region else None
 
 
+class Attestation(BaseModel):
+    """Key attestation of the app's install key; the request body is signed with that key
+    (header X-Rasp-Signature). Optional: older app versions send none."""
+    model_config = ConfigDict(extra="ignore")
+
+    nonce: str = Field(max_length=128)                  # this request's nonce from GET /v1/challenge
+    chain: list[str] = Field(min_length=1, max_length=10)  # base64 DER, leaf first
+
+    @field_validator("chain")
+    @classmethod
+    def _certs(cls, chain: list[str]) -> list[str]:
+        if any(not isinstance(c, str) or len(c) > 16384 for c in chain):
+            raise ValueError("certificates must be base64 text of at most 16 KB")
+        return chain
+
+
 class CollectPayload(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
@@ -138,6 +155,7 @@ class CollectPayload(BaseModel):
     device: Device
     app: App
     device_context: DeviceContext | None = None
+    attestation: Attestation | None = None
     signals: dict[str, Any]
     unknown: list[str] = Field(default_factory=list)
     failed_groups: list[str] = Field(default_factory=list)

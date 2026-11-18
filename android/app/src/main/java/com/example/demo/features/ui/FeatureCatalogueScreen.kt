@@ -873,9 +873,12 @@ private fun AssessmentResultCard(response: ApiResponse) {
 
             if (response.payloadBytes > 0) {
                 Text(
-                    text = "Payload ${"%.1f".format(response.payloadBytes / 1024.0)} KB, " +
-                        "${"%.1f".format(response.wireBytes / 1024.0)} KB on the wire (gzip)" +
-                        if (response.attested) " · hardware-attested" else " · unsigned",
+                    text = "Payload ${"%.1f".format(response.payloadBytes / 1024.0)} KB" +
+                        when (result?.assurance) {
+                            "attested" -> " · hardware-attested and signed"
+                            "failed" -> " · attestation FAILED"
+                            else -> " · not attested"
+                        },
                     style = small, fontSize = 11.sp, color = muted
                 )
             }
@@ -955,10 +958,12 @@ private fun AssessmentResultCard(response: ApiResponse) {
 
                 result.attestation?.let { a ->
                     Text(
-                        text = "Attestation: chain ${if (a.optBoolean("chain_valid")) "valid" else "INVALID"}, " +
+                        text = "Attestation (${result.assurance ?: "?"}): chain ${if (a.optBoolean("chain_valid")) "valid" else "INVALID"}, " +
                             "root ${if (a.optBoolean("root_trusted")) "Google" else "UNTRUSTED"}, " +
                             "${a.optString("security_level")}, boot ${a.optString("verified_boot_state")}, " +
-                            "bootloader ${if (a.optBoolean("device_locked")) "locked" else "unlocked"}",
+                            "bootloader ${if (a.optBoolean("device_locked")) "locked" else "unlocked"}, " +
+                            "signature ${if (a.optBoolean("signature_valid")) "valid" else "INVALID"}" +
+                            if (a.optBoolean("key_created_in_session")) " · new install key" else "",
                         style = label, color = muted
                     )
                 }

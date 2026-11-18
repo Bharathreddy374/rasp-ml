@@ -62,8 +62,8 @@ class PipelineTest(unittest.TestCase):
         self.assertEqual(ss["F329"], 0)      # first time this install is seen
         self.assertEqual(ss["F339"], 1)
         self.assertEqual(res["retrieved"]["history"]["sessions_seen"], 0)
-        self.assertEqual(set(res["timings_ms"]), {"normalize", "retrieve", "rules", "model", "persist", "total"})
-        self.assertEqual(set(self.store.get(res["id"])["result"]["timings_ms"]), {"normalize", "retrieve", "rules", "model", "total"})
+        self.assertEqual(set(res["timings_ms"]), {"normalize", "integrity", "retrieve", "rules", "model", "persist", "total"})
+        self.assertEqual(set(self.store.get(res["id"])["result"]["timings_ms"]), {"normalize", "integrity", "retrieve", "rules", "model", "total"})
 
     # ---- persistence ----
     def test_everything_is_stored(self):

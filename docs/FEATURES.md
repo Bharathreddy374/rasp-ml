@@ -12,7 +12,7 @@ Status is taken from a **real scan of a genuine phone** (vivo I2221, Android 16)
 | Status | Count | Meaning |
 |---|---|---|
 | Measured | 232 | Collected on the phone and sent typed in the signed payload. 23 of these come from the native library `libtrustprobe`. |
-| Backend | 81 | Never reported by the phone. F001–F010 are read from the hardware attestation chain, 18 are computed from the request and history, and 47 are planned (they need GeoIP, TLS edge data, account IDs or a graph job). |
+| Backend | 81 | Never reported by the phone. F001–F010, F025, F317, F321 and F364 come from the install key's hardware attestation and payload signature; the rest from the request, geo data, history and the device graph. Not computable here: Play Integrity (F011–F015, needs a Google Cloud project), bank data (11 IDs) and the DNS probe (F300). See BACKEND.md §2. |
 | Unknown | 57 | No measurement yet. Each is labelled with the reason. The backend treats unknown as *unknown*, never as clean. |
 
 **Device variance** says how much a signal differs between *genuine* devices, which decides how it can be judged:
@@ -574,19 +574,19 @@ Generated from the code and a real phone scan (vivo I2221, Android 16).
 | F287 | `ip_asn_type` | Backend (planned) |  | High |
 | F288 | `ip_country` | Backend (planned) |  | High |
 | F289 | `ip_vs_sim_country` | Backend (planned) |  | High |
-| F290 | `ip_vs_timezone` | Backend (planned) |  | High |
+| F290 | `ip_vs_timezone` | Backend (geo data + device_context timezone) |  | High |
 | F291 | `ip_vs_locale` | Backend (planned) |  | High |
 | F292 | `vpn_proxy_flag` | Backend (planned) |  | High |
 | F293 | `tor_exit_flag` | Backend (planned) |  | High |
 | F294 | `datacenter_ip_flag` | Backend (planned) |  | High |
 | F295 | `ip_reputation_score` | Backend (planned) |  | High |
-| F296 | `tls_ja3_hash` | Backend (planned) |  | High |
-| F297 | `tls_ja3_vs_cohort` | Backend (planned) |  | High |
+| F296 | `tls_ja3_hash` | Backend (edge worker, EDGE_SECRET) |  | High |
+| F297 | `tls_ja3_vs_cohort` | Backend (edge worker, cohort of app version + SDK) |  | High |
 | F298 | `http_header_order_hash` | Backend (planned) |  | High |
 | F299 | `user_agent_vs_build` | Backend (computed) |  | High |
 | F300 | `dns_resolver_class` | Backend (planned) |  | High |
 | F301 | `network_type` | Backend (planned) |  | High |
-| F302 | `rtt_ms` | Backend (planned) |  | High |
+| F302 | `rtt_ms` | Backend (edge worker, EDGE_SECRET) |  | High |
 | F303 | `wifi_vs_cell_switches` | Backend (planned) |  | High |
 | F304 | `ip_changes_in_session` | Backend (computed) |  | High |
 | F305 | `request_timing_regularity` | Backend (computed) |  | High |
@@ -600,15 +600,15 @@ Generated from the code and a real phone scan (vivo I2221, Android 16).
 | F313 | `kernel_version_changed` | Backend (planned) |  | Per install |
 | F314 | `sdk_version_changed` | Backend (computed) |  | Per install |
 | F315 | `app_version_regression` | Backend (computed) | Yes | Per install |
-| F316 | `attest_key_rotation_freq` | Backend (planned) |  | Per install |
-| F317 | `attest_key_age_days` | Backend (planned) |  | Per install |
-| F318 | `attest_chain_changed` | Backend (planned) |  | Per install |
-| F319 | `key_reinstall_regen` | Backend (planned) |  | Per install |
-| F320 | `distinct_attest_keys_per_install` | Backend (planned) |  | Per install |
-| F321 | `key_created_in_session` | Backend (planned) |  | Per install |
+| F316 | `attest_key_rotation_freq` | Backend (attestation + history) |  | Per install |
+| F317 | `attest_key_age_days` | Backend (attestation + history) |  | Per install |
+| F318 | `attest_chain_changed` | Backend (attestation + history) |  | Per install |
+| F319 | `key_reinstall_regen` | Backend (attestation + history) |  | Per install |
+| F320 | `distinct_attest_keys_per_install` | Backend (attestation + history) |  | Per install |
+| F321 | `key_created_in_session` | Backend (attestation + history) |  | Per install |
 | F322 | `devices_per_account_30d` | Backend (planned) |  | Per install |
 | F323 | `accounts_per_device_30d` | Backend (planned) |  | Per install |
-| F324 | `installs_per_key_24h` | Backend (planned) |  | Per install |
+| F324 | `installs_per_key_24h` | Backend (attestation + history) |  | Per install |
 | F325 | `new_install_velocity` | Backend (planned) |  | Per install |
 | F326 | `reinstall_count_30d` | Backend (planned) |  | Per install |
 | F327 | `login_from_new_device_flag` | Backend (planned) |  | Per install |

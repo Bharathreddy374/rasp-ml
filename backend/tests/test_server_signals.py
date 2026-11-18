@@ -5,7 +5,7 @@ import unittest
 from pathlib import Path
 
 from helpers import phone, small_model_dir
-from trustpoc import retrieval
+from trustpoc import integrity, retrieval
 from trustpoc.geo import GeoIP
 from trustpoc.pipeline import Pipeline
 from trustpoc.schema import CollectPayload
@@ -54,7 +54,7 @@ class ServerSignalsTest(unittest.TestCase):
         self.assertEqual(set(ss) | set(nc), set(retrieval.BACKEND_SIGNALS))
         self.assertFalse(set(ss) & set(nc))
         self.assertTrue(all(nc.values()))
-        self.assertEqual(nc["F001"], retrieval.NO_ATTESTATION)
+        self.assertEqual(nc["F001"], integrity.NO_ATTESTATION)
         self.assertEqual(nc["F322"], retrieval.NO_BANK)
         self.assertEqual(nc["F306"], retrieval.NO_HISTORY)
 

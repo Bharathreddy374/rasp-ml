@@ -27,6 +27,7 @@ Each stage is one module with one responsibility. Nothing in `api.py` (HTTP, aut
 | Endpoint | Auth | Purpose |
 |---|---|---|
 | `GET /health` | none | Liveness: database reachable, model loaded. `503` if the database is down. |
+| `GET /v1/challenge` | `X-Api-Key` if `COLLECT_API_KEY` is set | `{"nonce", "expires_in": 300}`: a fresh server nonce for key attestation (§2, stage 3b). |
 | `POST /v1/collect` | `X-Api-Key` if `COLLECT_API_KEY` is set | The one write path: payload in, decision out. |
 | `GET /v1/sessions/{id}` | `X-Admin-Token` | One stored session: what the phone sent, what was retrieved, what was decided. |
 | `GET /v1/sessions` | `X-Admin-Token` | List: `?install_id=`, `?min_level=4`, `?limit=50`. |
@@ -110,14 +111,28 @@ The only place that interprets signal values. Two shapes arrive:
 - Missing, `unknown` and undecidable signals do not become probes; the model sees them as NaN.
 - Any ALERT-risk signal that no rule uses is listed in `unmapped_alerts` and counts as context (Tier C).
 
+### 3b · Integrity: [integrity.py](../backend/trustpoc/integrity.py) and [attestation.py](../backend/trustpoc/attestation.py)
+App 1.3+ keeps **one hardware-attested EC key per install** in AndroidKeyStore. It is created the first time the app sends, with that request's `/v1/challenge` nonce as the attestation challenge. Every request then carries `attestation: {nonce, chain}` and is signed with the key (header `X-Rasp-Signature`: ECDSA-SHA256 over the exact body bytes).
+
+- **Nonce:** stateless, 8-byte issue time + 16 random bytes + 16-byte HMAC under `CHALLENGE_SECRET`; valid for 300 s. A reused nonce is caught by the database (`nonce_uses`).
+- **Chain:** verified link by link; the root must be one of Google's attestation roots, downloaded at startup into `data/attestation_roots/`. Serials are checked against Google's revocation list (refreshed every 6 h). `TRUSTPOC_OFFLINE=1` skips both downloads (tests).
+- **Assurance:** `attested` when the chain is trusted, the body signature is valid, the nonce is fresh and unused, and the key's challenge was issued by this server. `failed` if attestation was sent but any of that fails. `unverified` if none was sent (older app, or no usable keystore).
+
+| Signals | From |
+|---|---|
+| F001 chain to a Google root · F002 revoked · F003 security level · F004 verified boot · F005 bootloader locked · F006/F007 OS / vendor patch · F008 app signing cert = `expected_cert_sha256` · F009 package in `expected_packages` · F010 key challenge issued here · F025 attested OS / patch vs the payload · F317 key age (days) · F321 key created in this session · F364 signed + fresh nonce | the chain and signature |
+| F307 boot state went from Verified to not · F308 lock state changed · F316 key changes in 30 d · F318 attestation CA changed · F319 another key seen with this Android ID · F320 distinct keys for this install · F324 installs presenting this key in 24 h · F337 installs whose key came from the same attestation certificate in 7 d | history and fleet counts (`store.lookup`) |
+
+Reasons: `AT_SIGNATURE_INVALID`, `AT_NONCE_INVALID`, `AT_UNTRUSTED_CHAIN`, `AT_REVOKED`, `AT_KEY_SHARED` (family *integrity*, Tier B); `AT_BOOTLOADER_UNLOCKED`, `AT_BOOT_REGRESSED` (*root*, B); `AT_APP_CERT_MISMATCH`, `AT_PACKAGE_MISMATCH` (*app*, B); `AT_SOFTWARE_KEY`, `AT_PROPS_MISMATCH`, `AT_LOCK_STATE_CHANGED` (C).
+
 ### 4 · Retrieve: [retrieval.py](../backend/trustpoc/retrieval.py)
 Computes the 86 catalogue signals the phone never reports. Each one ends up either in `server_signals` or in `not_computed` with the reason, **never silently absent**. All IDs match [FEATURES.md](FEATURES.md). There is **one database round trip** (`store.lookup`): history, per-network / ASN / sensor / Android-ID counts and the device graph come from a single SQL statement.
 
 | Source | Signals computed |
 |---|---|
-| **Request** | F287 IP scope / ASN type · F292 proxy (proxy headers, hosting ASN, device VPN) · F296 JA3 (only from a trusted edge proxy's `X-JA3-Hash`) · F298 header-order hash · F299 User-Agent vs device · F365 payload age (ms) · clock skew |
+| **Request** | F287 IP scope / ASN type · F292 proxy (proxy headers, hosting ASN, device VPN) · F296 JA3 and F302 client RTT (only from our edge worker, see below) · F297 share of this JA3 among sessions of the same app version + Android SDK (30 d, needs 20+) · F298 header-order hash · F299 User-Agent vs device · F365 payload age (ms) · clock skew |
 | **Geo data** in `backend/data/geo/` (`python tools/update_geo.py`) | F286 ASN · F288 IP country · F293 Tor exit · F294 hosting / data centre · F340 installs on the ASN in 24 h |
-| **`device_context`** (optional block from the app) | F289 IP vs SIM country · F291 IP vs locale country · F301 network type · F303 network-type switches in 24 h · F310 boot count went backwards · F311 uptime drift vs the time between sessions (s) · F326 other installs on this phone in 30 d (hashed Android ID) |
+| **`device_context`** (optional block from the app) | F289 IP vs SIM country · F290 phone timezone's UTC offset fits no zone of the IP country (tz database `zone.tab`; `CX_TIMEZONE_MISMATCH`) · F291 IP vs locale country · F301 network type · F303 network-type switches in 24 h · F310 boot count went backwards · F311 uptime drift vs the time between sessions (s) · F326 other installs on this phone in 30 d (hashed Android ID) |
 | **History**: this install's sessions | F304 IP changes in 30 min · F305 request timing regularity · F306 patch regressed · F309 fingerprint changed · F312 OS downgrade · F313 kernel changed · F314 SDK changed · F315 app version regressed · F329 seconds since first seen · F330/F331/F332 level and rule history (30 d) · F333 anomaly trend vs the last 5 sessions · F363 phone clock moved forward |
 | **Network** | F295 share of risky sessions from this /24 in 30 d (raised for Tor and hosting) · F325 new installs on the /24 in 24 h · F339 installs on the /24 in 24 h |
 | **Device graph**: installs linked by a shared /24 or a shared Android ID in 7 days, up to 2 hops | F338 installs with identical sensor hardware · F343/F349 component size · F344 emulator share · F345 new-install share · F347 mean level of the members (0–1) · F348 entity age (days) · F350 farm score = min(1, log2(size)/5) × worst share |
@@ -125,10 +140,13 @@ Computes the 86 catalogue signals the phone never reports. Each one ends up eith
 
 New reasons (all Tier C unless noted): `CX_HOSTING_IP`, `CX_TOR_EXIT`, `CX_PROXY_HEADERS`, `CX_COUNTRY_MISMATCH`, `CX_CLOCK_SKEW`, `HS_PATCH_REGRESSED`, `HS_OS_DOWNGRADE`, `HS_APP_VERSION_REGRESSED`, `HS_BOOT_COUNT_RESET`, `HS_UPTIME_INCONSISTENT` (> 300 s drift), `HS_REINSTALLS` (3+ other installs), `GR_FARM_CLUSTER` (farm score ≥ 0.7). A manifest or certificate mismatch is Tier B (`AP_CODE_MISMATCH`, `AP_CERT_MISMATCH`).
 
+**Edge fields.** `X-Ja3-Hash` and `X-Client-Rtt-Ms` are only believed when `EDGE_SECRET` is set and the request carries the same value in `X-Edge-Secret`, i.e. it came through our own [edge/cloudflare-worker.js](../edge/cloudflare-worker.js). `TRUST_PROXY` alone no longer trusts them: a client could send any value. Cloudflare gives every plan the RTT; JA3 needs Bot Management (Enterprise).
+
 **Not computed (reason stored per session in `not_computed`):**
-- **Attestation:** F001–F015, F025, F307/F308, F316–F321, F324, F337, F364. These need key attestation, Play Integrity or a signed payload.
+- **Attestation:** only when the app sent none (older app, no keystore), or a field is absent from the device's attestation record. History signals (F307, F308, F318) need an earlier attested session.
+- **Play Integrity:** F011–F015 need a Google Cloud project.
 - **Bank data:** F322, F323, F327, F328, F334–F336, F341, F342, F346. These need account, payee or fraud-outcome data.
-- **Edge / infrastructure:** F290 (country-to-timezone table), F297 and F302 (TCP/TLS from an edge proxy), F300 (DNS probe).
+- **Edge / infrastructure:** F296, F297, F302 without the edge worker; F300 (DNS probe).
 - **Geo:** the geo signals are reported as not computed until the data files are downloaded, and for private IPs.
 
 ### 5 · Rules: [rules.py](../backend/trustpoc/rules.py)
@@ -174,7 +192,7 @@ One request writes one row to each table, **in a single SQL statement**, so a se
 
 | Table | Holds |
 |---|---|
-| `collect_sessions` | What the phone sent (`signals`, `unknown`, `failed_groups`, `device`, `app`) plus `device_context` and request metadata: `client_ip`, `net24`, `asn`, `sensor_sig`, `android_id_hash`, `header_hash`, `ja3`, `user_agent`, `received_at` (server clock), `scan_time` (phone clock). **Unique on `(install_id, session_id)`.** |
+| `collect_sessions` | What the phone sent (`signals`, `unknown`, `failed_groups`, `device`, `app`) plus `device_context` and request metadata: `client_ip`, `net24`, `asn`, `sensor_sig`, `android_id_hash`, `header_hash`, `ja3`, `user_agent`, `received_at` (server clock), `scan_time` (phone clock); attestation: `attestation` (verified chain summary), `attest_key_fp`, `attest_ca_fp`, `nonce`, `assurance`. **Unique on `(install_id, session_id)`.** |
 | `session_retrievals` | What the server looked up: `server_signals`, `not_computed` (`{signal: reason}`), `history` summary, `checks`, `retrieval_ms` |
 | `session_results` | The outcome: `rules_level`, `ml_level`, `final_level`, `risk_score`, `label`, `outcome`, `assurance`, `ml_mode`, `ml_status`, `model_version`, `model_data`, `feature_coverage`, `reasons`, `features` (the exact vector, `null` = missing), `ml` (probabilities, anomaly, explanation), `coverage`, `timings_ms` |
 
@@ -198,8 +216,12 @@ Environment variables (a `backend/.env` file is loaded if present; it is git-ign
 | `ML_MODE` | `enforce` | `enforce` or `shadow` |
 | `TRUST_PROXY` | `0` | `1` reads the client IP from `X-Forwarded-For` (behind Render, nginx) |
 | `MAX_BODY_KB` | `256` | Request size limit |
+| `CHALLENGE_SECRET` | random per process | HMAC key for `/v1/challenge` nonces. **Set it in production**: without it, a restart invalidates every install key's challenge (F010 false) until the app makes a new key. |
+| `EDGE_SECRET` | empty | Shared with the edge worker; enables F296 / F297 / F302 |
+| `TRUSTPOC_OFFLINE` | `0` | `1` skips downloading Google's attestation roots and revocation list |
+| `GEO_DATA` (build arg) | `0` | `1` downloads the country / ASN / Tor data during the Docker build |
 
-`backend/config.json`: `expected_cert_sha256` (list of release-certificate SHA-256 digests) and `release_manifests` (entries from `tools/apk_manifest.py`). Both empty = the checks are off.
+`backend/config.json`: `expected_cert_sha256` (list of release-certificate SHA-256 digests; also used for the attested F008), `expected_packages` (F009: `com.example.demo`, `com.example.demo.dev`) and `release_manifests` (entries from `tools/apk_manifest.py`). Both empty = the checks are off.
 
 ## 4. Run and test
 

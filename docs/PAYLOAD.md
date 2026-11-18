@@ -57,6 +57,7 @@ A complete real example (231 signals, 54 unknown) is [../backend/tests/fixtures/
 | `device_context` | object | no | Facts for server-side signals; every field optional. `sim_country`, `network_country` (ISO 3166 alpha-2), `timezone` (IANA), `locale` (BCP 47, e.g. `en-IN`), `network_type` (`wifi` · `cellular` · `ethernet` · `vpn` · `other` · `none`), `boot_count`, `uptime_ms`, `android_id_hash` (64 hex: SHA-256 of `rasp-ml/android-id/v1:` + `ANDROID_ID`; the raw ID never leaves the phone). Used for F289, F291, F301, F303, F310, F311, F326. |
 | `signals` | object | yes | See §3. Up to 600 entries. |
 | `unknown` | string[] | no | IDs of signals this device could not measure (§4) |
+| `attestation` | object | no | App 1.3+: `nonce` (from `GET /v1/challenge`, ≤ 128 chars) and `chain` (1–10 base64 DER certificates of the install key, leaf first). The body is then signed: header `X-Rasp-Signature` = base64 ECDSA-SHA256 over the exact body bytes. See [BACKEND.md §2, 3b](BACKEND.md#3b--integrity-integritypy-and-attestationpy). |
 | `failed_groups` | string[] | no | Probe groups that threw: `attestation`, `device_static`, `app_integrity`, `runtime_hooking`, `memory_procfs`, `timing`, `sensor_touch`, `risky_context`, `server_side`, `probe_health` |
 
 Unknown extra top-level fields are ignored. Text values are limited to 256 characters, and **NUL characters are removed**.
@@ -97,7 +98,7 @@ Which IDs are sent: the device-observed ones. The attestation rows (F001–F015)
 
 ## 6. Security
 
-`rasp_collect_v2` has **no nonce, counter, app identity, signature or attestation**. The server cannot tell a genuine device from a forged or replayed request, which is why every decision carries `"assurance": "unverified"`. Replays of the *same* `session_id` are harmless (the stored result is returned); a replay with a new `session_id` is a new session.
+Since app 1.3 the payload carries a server nonce and the install key's attestation chain, and the body is signed with that hardware key. The decision's `assurance` says what the server could verify: `attested` (Google-rooted chain, valid signature, fresh unused nonce issued by this server), `failed` (attestation sent but a check failed: reasons `AT_*`) or `unverified` (no attestation: older app or no usable keystore; then the server cannot tell a genuine device from a forged or replayed request). Replays of the *same* `session_id` are harmless (the stored result is returned); a replayed nonce under a new `session_id` fails with `AT_NONCE_INVALID`.
 
 Use it for data collection and risk scoring, not as proof. Set `COLLECT_API_KEY` on the server and use HTTPS in production (release builds disallow cleartext HTTP; the app does not send an API key yet).
 

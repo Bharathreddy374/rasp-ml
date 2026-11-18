@@ -4,6 +4,7 @@
       1. validate     schema.CollectPayload                 (done by the API layer: 422 on failure)
       2. de-duplicate (install_id, session_id) seen before? -> return the stored result
       3. normalise    normalize.normalize()   signals -> named probes the rules and model use
+     3b. integrity    integrity.evaluate()    key attestation chain + payload signature -> assurance
       4. retrieve     retrieval.retrieve()    request facts, history from the DB, config checks
       5. rules        rules.evaluate_probes() + retrieved evidence -> rules_level
       6. model        scoring.ModelService    25 features -> ML level, probabilities, explanation
@@ -12,21 +13,25 @@
       9. respond      render() - the same shape for a fresh call, a retry and GET /v1/sessions/{id}
 """
 import time
+from pathlib import Path
 from datetime import datetime, timezone
 
-from . import normalize, retrieval, rules
+from . import integrity, normalize, retrieval, rules
+from .attestation import TrustStore
 from .schema import CollectPayload, parse_timestamp
 from .scoring import ModelService, risk_score
 from .store import Duplicate
 
-ASSURANCE = "unverified"  # the collector payload is not signed or attested
 
 
 class Pipeline:
-    def __init__(self, store, model: ModelService, config: dict, geo=None):
+    def __init__(self, store, model: ModelService, config: dict, geo=None,
+                 trust: TrustStore | None = None, challenger: integrity.Challenger | None = None):
         self.store, self.model, self.config, self.geo = store, model, config, geo
+        self.trust = trust or TrustStore(Path("/nonexistent"), online=False)
+        self.challenger = challenger or integrity.Challenger()
 
-    def run(self, payload: CollectPayload, req: retrieval.Request) -> dict:
+    def run(self, payload: CollectPayload, req: retrieval.Request, raw_body: bytes = b"") -> dict:
         t0 = time.perf_counter()
         key = payload.context_keys
 
@@ -48,9 +53,13 @@ class Pipeline:
         # 3. normalise
         norm = timed("normalize", lambda: normalize.normalize(payload))
 
+        # 3b. integrity: attestation chain, challenge, body signature
+        integ = timed("integrity", lambda: integrity.evaluate(
+            payload, raw_body, req.signature, self.trust, self.challenger, self.config, now))
+
         # 4. retrieve
         retrieved = timed("retrieve", lambda: retrieval.retrieve(
-            self.store, self.geo, payload, req, scan_time, self.config, now))
+            self.store, self.geo, payload, req, scan_time, self.config, now, integ))
 
         # 5. rules
         def run_rules():
@@ -88,7 +97,7 @@ class Pipeline:
         result = {
             "rules_level": rules_level, "ml_level": outcome.level, "final_level": final, "risk_score": score,
             "label": rules.LABELS[final], "outcome": rules.policy_outcome(payload.action, final),
-            "assurance": ASSURANCE, "ml_mode": self.model.mode, "ml_status": outcome.status,
+            "assurance": retrieved.keys["assurance"], "attestation": retrieved.keys["attestation"], "ml_mode": self.model.mode, "ml_status": outcome.status,
             "model_version": outcome.version, "model_data": outcome.data,
             "feature_coverage": outcome.coverage, "reasons": reason_list, "features": outcome.features,
             "ml": {**outcome.detail, "missing_features": outcome.missing, "score_basis": score_basis},
@@ -125,7 +134,7 @@ def render(record: dict, duplicate: bool) -> dict:
         "decision": {
             "level": x.get("final_level"), "risk_score": x.get("risk_score"), "score_basis": ml.get("score_basis"),
             "label": x.get("label"), "outcome": x.get("outcome"),
-            "action": s["action"], "assurance": x.get("assurance"),
+            "action": s["action"], "assurance": x.get("assurance"), "attestation": x.get("attestation"),
             "rules_level": x.get("rules_level"), "ml_level": x.get("ml_level"), "ml_mode": x.get("ml_mode"),
             "reasons": x.get("reasons"),
         },

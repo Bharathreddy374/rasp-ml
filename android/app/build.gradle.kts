@@ -11,6 +11,8 @@ val keystoreProps = Properties().apply {
     if (f.exists()) f.inputStream().use { load(it) }
 }
 
+val RENDER_COLLECTOR = "https://rasp-ml-collector.onrender.com/v1/collect"
+
 android {
     namespace = "com.example.demo"
     compileSdk {
@@ -21,12 +23,13 @@ android {
         applicationId = "com.example.demo"
         minSdk = 24
         targetSdk = 37
-        versionCode = 3
-        versionName = "1.2"
+        versionCode = 4
+        versionName = "1.3"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         // Release builds must talk to the backend over HTTPS only.
         manifestPlaceholders["usesCleartextTraffic"] = "false"
+        buildConfigField("String", "COLLECTOR_URL", "\"$RENDER_COLLECTOR\"")
     }
 
     signingConfigs {
@@ -42,8 +45,16 @@ android {
 
     buildTypes {
         debug {
-            // Debug builds may reach a laptop backend on the LAN over plain HTTP.
+            // Installs next to the release app; signed with the release key (when present) so the
+            // backend's app-certificate check (F008) passes for it too.
+            applicationIdSuffix = ".dev"
+            versionNameSuffix = "-dev"
+            signingConfigs.findByName("release")?.let { signingConfig = it }
+            // Debug builds may reach a laptop backend on the LAN over plain HTTP:
+            //   .\gradlew.bat :app:assembleDebug -PdevCollectorUrl=http://192.168.1.5:8000/v1/collect
             manifestPlaceholders["usesCleartextTraffic"] = "true"
+            buildConfigField("String", "COLLECTOR_URL",
+                "\"${project.findProperty("devCollectorUrl") ?: RENDER_COLLECTOR}\"")
         }
         release {
             signingConfigs.findByName("release")?.let { signingConfig = it }
@@ -67,6 +78,7 @@ android {
     }
     buildFeatures {
         compose = true
+        buildConfig = true
     }
 }
 

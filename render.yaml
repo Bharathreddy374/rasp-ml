@@ -22,5 +22,9 @@ services:
         value: "1"
       - key: ML_MODE
         value: enforce
-      - key: GEO_DATA              # "1" downloads country / ASN / Tor data at build time
-        value: "0"
+      - key: GEO_DATA              # "1" downloads country / ASN / Tor data at build time (F286-F294, F340, F290)
+        value: "1"
+      - key: CHALLENGE_SECRET      # HMAC key for /v1/challenge nonces; must stay the same across deploys
+        generateValue: true
+      - key: EDGE_SECRET           # optional: shared with edge/cloudflare-worker.js to trust X-Ja3-Hash / X-Client-Rtt-Ms
+        sync: false
