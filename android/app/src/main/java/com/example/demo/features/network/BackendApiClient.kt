@@ -81,9 +81,13 @@ object BackendApiClient {
 
     private const val KEY_COLLECTOR_URL = "collector_url"
 
+    /** The team's deployed collector (Render). Used until the user saves a different URL. */
+    const val DEFAULT_COLLECTOR_URL = "https://rasp-ml-collector.onrender.com/v1/collect"
+
     /** Full URL of the external collector that receives rasp_collect_v2 payloads. */
     fun getCollectorUrl(context: Context): String =
-        context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).getString(KEY_COLLECTOR_URL, "") ?: ""
+        context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).getString(KEY_COLLECTOR_URL, null)
+            ?.takeIf { it.isNotBlank() } ?: DEFAULT_COLLECTOR_URL
 
     fun saveCollectorUrl(context: Context, url: String) {
         context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
@@ -201,8 +205,9 @@ object BackendApiClient {
         val conn = (URL(url).openConnection() as HttpURLConnection).apply {
             requestMethod = "POST"
             doOutput = true
-            connectTimeout = 15000
-            readTimeout = 20000
+            // A free Render instance that went to sleep needs up to ~1 min to wake up.
+            connectTimeout = 30000
+            readTimeout = 90000
             setRequestProperty("Content-Type", "application/json; charset=utf-8")
             setRequestProperty("Accept", "application/json")
             if (gzip) setRequestProperty("Content-Encoding", "gzip")
