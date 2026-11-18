@@ -55,6 +55,7 @@ class Settings:
     max_body_kb: int = 256
     edge_secret: str = ""
     data_dir: Path = BASE / "data"
+    model_dir: Path | None = None           # MODEL_DIR: a retrained model (EC2 volume); falls back to data_dir
     config_path: Path = BASE / "config.json"
 
     @staticmethod
@@ -65,6 +66,7 @@ class Settings:
             admin_token=e("ADMIN_TOKEN", ""), collect_api_key=e("COLLECT_API_KEY", ""),
             ml_mode=e("ML_MODE", "enforce"), trust_proxy=e("TRUST_PROXY", "0") == "1",
             max_body_kb=int(e("MAX_BODY_KB", "256")), edge_secret=e("EDGE_SECRET", ""),
+            model_dir=Path(e("MODEL_DIR")) if e("MODEL_DIR") else None,
         )
 
 
@@ -130,6 +132,11 @@ def create_app(settings: Settings | None = None, store: Store | None = None,
                challenger: Challenger | None = None) -> FastAPI:
     s = settings or Settings.from_env()
     store = store or build_store(s)
+    if model is None and s.model_dir is not None:
+        model = ModelService(s.model_dir, s.ml_mode)
+        if model.models is None:
+            log.info("no usable model in MODEL_DIR=%s: using the one built into the image", s.model_dir)
+            model = None
     model = model or ModelService(s.data_dir, s.ml_mode)
     geo = GeoIP(s.data_dir / "geo")
     trust = trust or TrustStore(s.data_dir / "attestation_roots")

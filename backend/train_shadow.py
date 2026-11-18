@@ -7,6 +7,7 @@ vectors of stored real sessions that the rules scored Level 1-2 (used as
 low-risk negatives only). The report is a pipeline check, not an accuracy claim.
 """
 import json
+import os
 import time
 from pathlib import Path
 
@@ -21,6 +22,9 @@ from trustpoc.features import extract
 
 BASE = Path(__file__).resolve().parent
 DATA = BASE / "data"
+# Where the trained model is written. On EC2 the retrain service sets MODEL_DIR to a docker
+# volume, so a model trained on real sessions survives image rebuilds (docs: deploy/aws-ec2).
+OUT = Path(os.environ["MODEL_DIR"]) if os.environ.get("MODEL_DIR") else DATA
 FPR_BUDGET = 0.001  # 0.1% of genuine sessions, the design target
 
 
@@ -150,8 +154,9 @@ def main():
 
     model.set_thresholds({f: h["threshold"] for f, h in report["heads"].items()})
     report["thresholds"] = model.thresholds
-    model.save(DATA / "shadow_model.pkl")
-    (DATA / "ml_report.json").write_text(json.dumps(report, indent=2))
+    OUT.mkdir(parents=True, exist_ok=True)
+    model.save(OUT / "shadow_model.pkl")
+    (OUT / "ml_report.json").write_text(json.dumps(report, indent=2))
 
     print(f"Trained {meta['version']} on {len(idx_tr)} sessions ({meta['data']}) in {time.time()-t0:.1f}s")
     print("SYNTHETIC DATA: pipeline check only, not an accuracy claim.\n")
@@ -163,7 +168,7 @@ def main():
         mark = "  <- selected" if kind == model.anomaly_kind else ""
         print(f"{kind:<12} >= p99: genuine {a['genuine_above_p99']:.2%}, attacks {a['attacks_above_p99']:.1%}, "
               f"hidden variants {a['hidden_above_p99']:.1%}{mark}")
-    print(f"saved {DATA / 'shadow_model.pkl'} and ml_report.json; restart the server to load it")
+    print(f"saved {OUT / 'shadow_model.pkl'} and ml_report.json; restart the server to load it")
 
 
 if __name__ == "__main__":

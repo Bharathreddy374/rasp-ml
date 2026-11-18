@@ -27,6 +27,7 @@ computed in retrieval.py from the database.
 import base64
 import hashlib
 import hmac
+import logging
 import os
 import secrets
 import struct
@@ -44,6 +45,10 @@ class Challenger:
         env = os.environ.get("CHALLENGE_SECRET", "")
         # Without a configured secret, nonces stay valid only until the process restarts.
         self.secret = secret or (env.encode() if env else secrets.token_bytes(32))
+        if not secret and not env:
+            logging.getLogger(__name__).warning(
+                "CHALLENGE_SECRET is not set: nonces are valid only in this process. With several "
+                "workers or after a restart, attestation fails (F010 / nonce checks). Set it.")
         self.ttl_s = ttl_s
 
     def issue(self, now: datetime | None = None) -> str:

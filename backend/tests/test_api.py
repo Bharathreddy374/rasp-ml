@@ -146,3 +146,32 @@ class ApiTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ModelDirTest(unittest.TestCase):
+    """MODEL_DIR (EC2 retrain volume) is preferred, the image's model is the fallback."""
+
+    def test_model_dir_preferred_and_falls_back(self):
+        import shutil
+        from trustpoc.features import FEATURES
+        from trustpoc.ml import ShadowModels
+        image_dir = small_model_dir()
+        vol = Path(tempfile.mkdtemp())
+        settings = Settings(store="memory", config_path=Path(tempfile.mkdtemp()) / "none.json",
+                            data_dir=image_dir, model_dir=vol)
+        app = create_app(settings, MemoryStore())                       # empty volume -> image model
+        _, body = call(app, "POST", "/v1/collect", phone("m1"))
+        self.assertEqual(body["model"]["status"], "scored")
+
+        m = ShadowModels.load(image_dir / "shadow_model.pkl")
+        m.meta = {**m.meta, "version": "volume-model"}
+        m.save(vol / "shadow_model.pkl")
+        _, body = call(create_app(settings, MemoryStore()), "POST", "/v1/collect", phone("m2"))
+        self.assertEqual(body["model"]["version"], "volume-model")     # volume wins
+
+        m.meta = {**m.meta, "features": FEATURES[:-1], "version": "stale"}
+        m.save(vol / "shadow_model.pkl")
+        _, body = call(create_app(settings, MemoryStore()), "POST", "/v1/collect", phone("m3"))
+        self.assertNotEqual(body["model"]["version"], "stale")          # other feature list: ignored
+        self.assertEqual(body["model"]["status"], "scored")
+        shutil.rmtree(vol, ignore_errors=True)

@@ -50,6 +50,10 @@ class ModelService:
         try:
             from .ml import ShadowModels
             self.models = ShadowModels.load(data_dir / "shadow_model.pkl")
+            trained_on = (self.models.meta.get("features") if self.models else None)
+            if trained_on is not None and list(trained_on) != list(FEATURES):
+                log.warning("model at %s was trained on a different feature list; not using it", data_dir)
+                self.models = None
             rep = data_dir / "ml_report.json"
             self.report = json.loads(rep.read_text()) if rep.exists() else None
         except Exception as exc:  # noqa: BLE001  the service still runs, rules-only
