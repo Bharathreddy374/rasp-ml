@@ -262,9 +262,10 @@ python tools/download_dataset.py --include-test  # also load-test / deployment-c
 
 | File | Contents |
 |---|---|
-| `dataset.csv` | One row per session (about 500 columns): session and device info, `ctx_*` device context, **F001–F370** (phone values, or server-computed for F286–F365; booleans 1/0; empty = missing), `F###_risk` (the phone's verdict for pair signals), `mf_*` (the model's 25 input features), and the results (`rules_level`, `ml_level`, `final_level`, `risk_score`, `outcome`, `anomaly_pct`, `head_*` probabilities, `reason_codes`) |
+| `dataset.csv` | One row per session (about 500 columns): session and device info, `ctx_*` device context, **F001–F370** (phone values, or server-computed for F286–F365; booleans 1/0; empty = missing), `F###_risk` (the phone's verdict for pair signals), `mf_*` (the model's 25 input features), `assurance` (attested / failed / unverified) and `att_*` (the verified key attestation: security level, boot state, bootloader lock, patch levels, chain / signature / nonce checks, `att_key_fp` = which install key), and the results (`rules_level`, `ml_level`, `final_level`, `risk_score`, `outcome`, `anomaly_pct`, `head_*` probabilities, `reason_codes`) |
+| `results.csv` | One row per session: who / when / which device, `assurance`, `att_key_fp`, and only the rule and ML results |
 | `dictionary.csv` | Every column with its group and meaning (catalogue names from [FEATURES.md](FEATURES.md)) |
-| `summary.txt` | Session, install and level counts |
+| `summary.txt` | Session, install, level and assurance counts |
 
 `final_level` is a pseudo-label: rules plus a model trained on synthetic data. Verify sessions (attack lab, confirmed fraud) before using it as ground truth. The output folder is under `backend/data/`, which git ignores.
 

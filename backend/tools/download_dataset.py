@@ -16,9 +16,12 @@ Reads DATABASE_URL (and DB_SCHEMA) from backend/.env. Writes:
                                 reported unknown, or not computed); never read empty as "clean".
                       F###_risk the phone's own verdict for pair signals: 0 SAFE, 1 INFO, 2 SUSPICIOUS, 3 ALERT
                       mf_*      the 25 features the ML model saw (empty = missing)
+                      assurance attested | failed | unverified (app 1.3+ sends key attestation)
+                      att_*     the verified key attestation: security level, boot state, lock,
+                                patch levels, chain / signature / nonce checks, install key id
                       results   rules / ML / final level, risk score, outcome, anomaly percentile,
                                 per-head probabilities, reasons
-  results.csv       one row per session: who / when / which device, and only the ML and rule results
+  results.csv       one row per session: who / when / which device, assurance, and the ML and rule results
   dictionary.csv    one row per column: group and meaning (catalogue names from docs/FEATURES.md)
   summary.txt       row counts and level distribution
 
@@ -68,6 +71,30 @@ SESSION_COLUMNS = {
     "unknown_ids": "IDs the phone reported as unknown (; separated)",
     "failed_groups": "probe groups that crashed on the phone (; separated)",
 }
+# From collect_sessions.attestation (the verified chain summary); empty when no attestation was sent.
+ATTEST_COLUMNS = {
+    "assurance": "attested = Google-rooted key, valid signature, fresh nonce from this server; failed = attestation "
+                 "sent but a check failed (see reason_codes AT_*); unverified = no attestation (app before 1.3)",
+    "att_security_level": "where the install key lives: StrongBox | TEE | Software",
+    "att_verified_boot_state": "Verified | SelfSigned | Unverified | Failed",
+    "att_device_locked": "bootloader locked (1/0)",
+    "att_os_version": "attested Android version, e.g. 160000 = 16",
+    "att_os_patch_level": "attested OS patch level YYYYMM",
+    "att_vendor_patch_level": "attested vendor patch level YYYYMMDD",
+    "att_chain_valid": "certificate chain verifies link by link (1/0)",
+    "att_root_trusted": "chain ends in a Google attestation root (1/0)",
+    "att_revoked": "a certificate is on Google's revocation list (1/0)",
+    "att_signature_valid": "request body signature valid with the attested key (1/0)",
+    "att_nonce_fresh": "request nonce issued by this server within 5 minutes (1/0)",
+    "att_nonce_reused": "request nonce was used before: replay (1 = replay)",
+    "att_challenge_issued_here": "the key was created for a challenge this server issued (1/0)",
+    "att_key_created_in_session": "the install key was created for this request (1/0)",
+    "att_key_created_at": "when the install key was created (UTC)",
+    "att_key_fp": "SHA-256 of the install key: the same value across sessions = the same key",
+    "att_ca_fp": "SHA-256 of the certificate that issued the key",
+}
+ATTEST_FIELDS = [c[4:] for c in ATTEST_COLUMNS if c.startswith("att_")]
+
 RESULT_COLUMNS = {
     "rules_level": "level 1-5 from the rules", "ml_level": "level 1-5 from the model (empty = not scored)",
     "final_level": "decided level 1-5 (max of rules and model in enforce mode)",
@@ -86,7 +113,7 @@ RESULT_COLUMNS = {
 QUERY = """
 SELECT s.id, s.install_id, s.session_id, s.received_at, s.scan_time, s.action, s.app_version,
        s.device, s.client_ip, s.net24, s.asn, s.payload_bytes, s.signals, s.unknown, s.failed_groups,
-       s.device_context, r.server_signals, r.not_computed,
+       s.device_context, r.server_signals, r.not_computed, s.attestation, x.assurance,
        x.rules_level, x.ml_level, x.final_level, x.risk_score, x.label, x.outcome, x.ml_status, x.ml_mode,
        x.model_version, x.model_data, x.feature_coverage, x.reasons, x.features, x.ml
   FROM collect_sessions s
@@ -161,13 +188,13 @@ def main() -> int:
         if fid in pair_ids:
             signal_cols.append(f"{fid}_risk")
     header = (list(SESSION_COLUMNS) + [f"ctx_{c}" for c in CONTEXT_FIELDS] + signal_cols
-              + [f"mf_{f}" for f in FEATURES] + list(RESULT_COLUMNS))
+              + [f"mf_{f}" for f in FEATURES] + list(ATTEST_COLUMNS) + list(RESULT_COLUMNS))
 
     out = Path(args.out) if args.out else BACKEND / "data" / "datasets" / datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
     out.mkdir(parents=True, exist_ok=True)
 
     result_header = ["session_pk", "install_id", "session_id", "received_at", "action", "app_version",
-                     "manufacturer", "model", "android_release"] + list(RESULT_COLUMNS)
+                     "manufacturer", "model", "android_release", "assurance", "att_key_fp"] + list(RESULT_COLUMNS)
     levels, installs = Counter(), set()
     with open(out / "dataset.csv", "w", newline="", encoding="utf-8") as f,             open(out / "results.csv", "w", newline="", encoding="utf-8") as fr:
         w, wr = csv.writer(f), csv.writer(fr)
@@ -194,6 +221,12 @@ def main() -> int:
                 else:
                     row[fid] = v
             row.update({f"mf_{f}": feats.get(f) for f in FEATURES})
+            att = as_json(r["attestation"])
+            row["assurance"] = r["assurance"]
+            row.update({f"att_{k}": att.get(k) for k in ATTEST_FIELDS})
+            row["att_key_created_at"] = att.get("created_at")
+            if att and "nonce_reused" not in att:
+                row["att_nonce_reused"] = False
             row.update({
                 **{k: r[k] for k in ("rules_level", "ml_level", "final_level", "risk_score", "label", "outcome",
                                      "ml_status", "ml_mode", "model_version", "model_data", "feature_coverage")},
@@ -225,11 +258,15 @@ def main() -> int:
                             names.get(c, c)])
             elif c.startswith("mf_"):
                 w.writerow([c, "model_feature", f"ML input {c[3:]} (empty = missing)"])
+            elif c in ATTEST_COLUMNS:
+                w.writerow([c, "attestation", ATTEST_COLUMNS[c]])
             else:
                 w.writerow([c, "result", RESULT_COLUMNS[c]])
 
+    assured = Counter(r["assurance"] for r in rows)
     summary = [f"sessions: {len(rows)}", f"installs: {len(installs)}", f"columns: {len(header)}",
                "final_level: " + ", ".join(f"L{k}={v}" for k, v in sorted(levels.items())),
+               "assurance: " + ", ".join(f"{k}={v}" for k, v in sorted(assured.items())),
                f"first: {cell(rows[0]['received_at'])}", f"last: {cell(rows[-1]['received_at'])}",
                "test installs: " + ("included" if args.include_test else "excluded")]
     (out / "summary.txt").write_text("\n".join(summary) + "\n", encoding="utf-8")
