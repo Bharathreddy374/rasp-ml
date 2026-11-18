@@ -71,10 +71,10 @@ Response:
 
   "model": {
     "status": "scored", "version": "shadow-20261118-0017", "trained_on": "synthetic",
-    "feature_coverage": 0.92, "missing_features": ["probe_total_ms", "probe_max_ms"],
+    "feature_coverage": 1.0, "missing_features": [],
     "anomaly_pct": 88.0, "top_head": "app_tamper_clone", "agreement": "agree",
     "heads": {"hidden_root": 0.001, "instrumentation": 0.001, "emulator_virtual": 0.0, "app_tamper_clone": 0.021},
-    "explanation": [], "features": {"sensor_count": 44.0, "ctx_adb_enabled": 1.0, "probe_total_ms": null}
+    "explanation": [], "features": {"sensor_count": 44.0, "ctx_adb_enabled": 1.0, "probe_total_ms": 2339.0, "libc_open_us": 13.958}
   },
 
   "retrieved": {
@@ -180,7 +180,7 @@ Where the score falls inside the band comes from the model: the larger of the hi
 
 The score is stored in `session_results.risk_score` and listed by `GET /v1/sessions`. Like the ML level, its position inside the band is only as good as the model, which is trained on synthetic data.
 
-For the current app, 23 of 25 features are present: `probe_total_ms` and `probe_max_ms` are never sent, because the app does not time each probe. They stay NaN (coverage 0.92).
+For the current app all 25 features are present (coverage 1.0). The two timing features come from what the phone measures: `probe_total_ms` = F221 (whole scan wall time, ms) and `libc_open_us` = F211 (libc `open()` latency, ns → µs); hooks such as Frida or hidden root slow both down. A phone that reports them as unknown leaves them NaN, never 0. The synthetic generator draws them on the same scale (scan ≈ 2 s, `open()` ≈ 4.5 µs), and `train_shadow.py` re-extracts real sessions from their stored payload, so sessions scored with an older feature set train with today's features.
 
 > **The model is trained on synthetic data.** Its scores validate the pipeline; they are not measured accuracy.
 > Everything needed to retrain on real data is stored: `session_results.features`.

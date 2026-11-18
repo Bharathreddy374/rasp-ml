@@ -135,7 +135,7 @@ DATA_DIR = {"F098": D(2), "F099": D(2), "F108": D(2), "F109": D(2, "true")}
 
 MAPPED = (
     {i for ids in FLAGS.values() for i in ids} | {i for ids in LISTS.values() for i in ids}
-    | set(ROOT_MANAGERS) | set(DATA_DIR) | {"F031", "F116", "F255", "F273", "F021"}
+    | set(ROOT_MANAGERS) | set(DATA_DIR) | {"F031", "F116", "F255", "F273", "F021", "F221", "F211"}
 )
 
 EMU_FINGERPRINT = ("generic", "sdk_gphone", "emulator", "vbox86", "genymotion", "google_sdk")
@@ -210,6 +210,14 @@ def normalize(payload) -> Normalized:
     if "F273" in present and "F273" not in unknown and number(present["F273"].value) is not None:
         out.probes["ctx_accessibility_services"] = _ok(int(number(present["F273"].value)))
         used.add("F273")
+    # timing: hooks (Frida, hidden root) slow probes down; emulators change the profile
+    for fid, name, scale in (("F221", "scan_total_ms", 1.0),        # whole scan wall time, ms
+                             ("F211", "libc_open_us", 0.001)):      # libc open() latency, ns -> us
+        if fid in present and fid not in unknown:
+            v = number(present[fid].value)
+            if v is not None and v > 0:
+                out.probes[name] = _ok(round(v * scale, 3))
+                used.add(fid)
 
     # emulator identity: from the device block and the SoC string (F021 "hardware / board")
     dev = payload.device

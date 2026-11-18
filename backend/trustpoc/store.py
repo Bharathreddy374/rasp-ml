@@ -345,8 +345,10 @@ class PostgresStore:
 
     def training_features(self, max_rules_level: int, limit: int) -> list[dict]:
         return self._run(lambda cur: [_plain(r) for r in _fetch(cur, """
-            SELECT features, rules_level FROM session_results
-             WHERE rules_level <= %s ORDER BY scored_at DESC LIMIT %s""", (max_rules_level, limit))])
+            SELECT x.features, x.rules_level, s.install_id, s.session_id, s.action, s.device, s.app,
+                   s.signals, s.unknown, s.failed_groups
+              FROM session_results x JOIN collect_sessions s ON s.id = x.session_id
+             WHERE x.rules_level <= %s ORDER BY x.scored_at DESC LIMIT %s""", (max_rules_level, limit))])
 
     # ---- write: ONE statement, so all three rows are stored or none are ----
     def save(self, session: dict, retrieved: dict, result: dict) -> str:
@@ -567,4 +569,7 @@ class MemoryStore:
     def training_features(self, max_rules_level: int, limit: int) -> list[dict]:
         with self._lock:
             rows = [r for r in self._rows.values() if r["result"]["rules_level"] <= max_rules_level]
-        return [{"features": r["result"]["features"], "rules_level": r["result"]["rules_level"]} for r in rows[:limit]]
+        return [{"features": r["result"]["features"], "rules_level": r["result"]["rules_level"],
+                 **{k: r["session"].get(k) for k in ("install_id", "session_id", "action", "device", "app",
+                                                     "signals", "unknown", "failed_groups")}}
+                for r in rows[:limit]]

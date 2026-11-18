@@ -24,6 +24,26 @@ DATA = BASE / "data"
 FPR_BUDGET = 0.001  # 0.1% of genuine sessions, the design target
 
 
+def rebuild_features(row: dict) -> list[float] | None:
+    """Re-run normalise + extract on the stored payload, so sessions scored with an older feature
+    set train with today's features (e.g. the scan-timing features added in Nov 2026)."""
+    import json
+    from trustpoc.normalize import normalize
+    from trustpoc.schema import CollectPayload
+
+    def j(v):
+        return json.loads(v) if isinstance(v, str) else v
+    try:
+        payload = CollectPayload.model_validate({
+            "schema": "rasp_collect_v2", "action": row["action"],
+            "context_keys": {"install_id": row["install_id"], "session_id": row["session_id"]},
+            "device": j(row["device"]), "app": j(row["app"]), "signals": j(row["signals"]) or {},
+            "unknown": j(row["unknown"]) or [], "failed_groups": j(row["failed_groups"]) or []})
+    except Exception:  # noqa: BLE001
+        return None
+    return extract({"probes": normalize(payload).probes})
+
+
 def load_real_low_risk():
     """Feature vectors of real sessions the rules scored Level 1-2, read from the database.
 
@@ -44,8 +64,16 @@ def load_real_low_risk():
     except StoreError as exc:
         print(f"could not read sessions ({exc}): training on synthetic data only")
         return np.empty((0, len(FEATURES)))
-    vectors = [[np.nan if r["features"].get(n) is None else r["features"][n] for n in FEATURES] for r in rows]
-    print(f"read {len(vectors)} real low-risk sessions from the database")
+    vectors, rebuilt = [], 0
+    for r in rows:
+        v = rebuild_features(r)
+        if v is None:   # payload no longer validates: fall back to the vector stored at scoring time
+            v = [np.nan if r["features"].get(n) is None else r["features"][n] for n in FEATURES]
+        else:
+            rebuilt += 1
+        vectors.append(v)
+    print(f"read {len(vectors)} real low-risk sessions from the database "
+          f"({rebuilt} re-extracted with the current feature set)")
     return np.array(vectors, dtype=float).reshape(-1, len(FEATURES))
 
 

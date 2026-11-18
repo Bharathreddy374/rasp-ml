@@ -13,7 +13,7 @@ FEATURES = [
     "rt_tracer_nonzero", "rt_debugger", "rt_frida_maps", "rt_frida_threads_count",
     "rt_frida_port", "rt_xposed", "app_data_dir_bad",
     "ctx_developer_options", "ctx_adb_enabled", "ctx_accessibility_count", "ctx_vpn",
-    "probe_error_count", "probe_total_ms", "probe_max_ms",
+    "probe_error_count", "probe_total_ms", "libc_open_us",
 ]
 
 NAN = float("nan")
@@ -39,9 +39,6 @@ def extract(payload: dict) -> list[float]:
     selinux = _get(p, "selinux_mode")
     tracer = _get(p, "rt_tracer_pid")
     data_dir_ok = _get(p, "app_data_dir_ok")
-    # Only probes that report a duration count; schema-2 payloads carry none, so these stay NaN
-    # (unknown) instead of a misleading 0 ms.
-    timings = [float(x.get("ms") or 0) for x in p.values() if isinstance(x, dict) and "ms" in x]
     errors = sum(1 for x in p.values() if isinstance(x, dict) and x.get("status") == "error")
     row = {
         "root_su_paths_count": _n(_get(p, "root_su_paths")),
@@ -67,8 +64,8 @@ def extract(payload: dict) -> list[float]:
         "ctx_accessibility_count": _n(_get(p, "ctx_accessibility_services")),
         "ctx_vpn": _b(_get(p, "ctx_vpn")),
         "probe_error_count": float(errors),
-        "probe_total_ms": sum(timings) if timings else NAN,
-        "probe_max_ms": max(timings) if timings else NAN,
+        "probe_total_ms": _n(_get(p, "scan_total_ms")),     # F221: whole scan wall time (ms)
+        "libc_open_us": _n(_get(p, "libc_open_us")),        # F211: libc open() latency (us)
     }
     return [row[f] for f in FEATURES]
 

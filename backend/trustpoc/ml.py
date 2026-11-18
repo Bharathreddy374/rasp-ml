@@ -46,8 +46,8 @@ FEATURE_LABELS = {
     "rt_xposed": "Xposed present", "app_data_dir_bad": "Unexpected data directory",
     "ctx_developer_options": "Developer options", "ctx_adb_enabled": "USB debugging",
     "ctx_accessibility_count": "Accessibility services", "ctx_vpn": "VPN",
-    "probe_error_count": "Failed probes", "probe_total_ms": "Total probe time",
-    "probe_max_ms": "Slowest probe",
+    "probe_error_count": "Failed probes", "probe_total_ms": "Scan duration (ms)",
+    "libc_open_us": "libc open() latency (us)",
 }
 
 

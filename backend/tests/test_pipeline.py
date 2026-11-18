@@ -48,10 +48,15 @@ class PipelineTest(unittest.TestCase):
     def test_model_sees_the_features_it_needs(self):
         m = self.run_payload(phone())["model"]
         self.assertEqual(m["status"], "scored")
-        self.assertEqual(sorted(m["missing_features"]), ["probe_max_ms", "probe_total_ms"])  # the app sends no per-probe timing
-        self.assertAlmostEqual(m["feature_coverage"], 0.92)
+        self.assertEqual(m["missing_features"], [])                       # all 25 features come from the phone
+        self.assertEqual(m["features"]["probe_total_ms"], 2339.0)           # F221
+        self.assertAlmostEqual(m["features"]["libc_open_us"], 13.958)       # F211 ns -> us
+        self.assertAlmostEqual(m["feature_coverage"], 1.0)
         self.assertEqual(m["features"]["sensor_count"], 44)
-        self.assertIsNone(m["features"]["probe_total_ms"])      # missing stays missing, never 0
+        # a phone that could not time the scan: missing stays missing, never 0
+        m = self.run_payload(phone("s2", unknown=["F221", "F211"]))["model"]
+        self.assertEqual(sorted(m["missing_features"]), ["libc_open_us", "probe_total_ms"])
+        self.assertIsNone(m["features"]["probe_total_ms"])
         self.assertEqual(set(m["heads"]), {"hidden_root", "instrumentation", "emulator_virtual", "app_tamper_clone"})
         self.assertEqual(m["trained_on"], "synthetic")
 

@@ -59,7 +59,7 @@ class PostgresTest(unittest.TestCase):
         self.assertEqual(rec["result"]["risk_score"], res["decision"]["risk_score"])
         self.assertEqual(rec["result"]["ml_status"], "scored")
         self.assertEqual(rec["result"]["features"]["sensor_count"], 44)
-        self.assertIsNone(rec["result"]["features"]["probe_total_ms"])
+        self.assertEqual(rec["result"]["features"]["probe_total_ms"], 2339.0)
         self.assertEqual({r["code"] for r in rec["result"]["reasons"]}, {"CX_DEVELOPER_OPTIONS", "CX_ADB_ENABLED"})
 
     def test_payload_with_nul_characters_is_stored(self):

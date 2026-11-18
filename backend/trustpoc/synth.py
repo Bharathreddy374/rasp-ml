@@ -11,12 +11,12 @@ import random
 FAMILIES = ["hidden_root", "instrumentation", "emulator_virtual", "app_tamper_clone"]
 
 
-def _probe(v, ms):
-    return {"status": "ok", "v": v, "ms": round(ms, 3)}
+def _probe(v):
+    return {"status": "ok", "v": v}
 
 
-def _err(ms):
-    return {"status": "error", "err": "SecurityException", "ms": round(ms, 3)}
+def _err():
+    return {"status": "error", "err": "SecurityException"}
 
 
 def genuine_base(r: random.Random) -> dict:
@@ -36,14 +36,18 @@ def genuine_base(r: random.Random) -> dict:
 
 
 def to_payload(values: dict, r: random.Random, speed: float, errors: int = 0) -> dict:
-    """speed scales probe timings (>1 = slower, e.g. hooked libc calls)."""
+    """speed scales timings (>1 = slower, e.g. hooked libc calls).
+
+    Timing on the scale app 1.x measures (vivo / Motorola / Xiaomi sessions, Nov 2026):
+    F221 whole scan ~1.8-3 s, F211 libc open() ~3-20 us with a long tail."""
     probes = {}
     names = list(values)
     failing = set(r.sample(names, min(errors, len(names))))
     base = r.uniform(0.6, 1.6)  # device speed
     for k, v in values.items():
-        ms = r.lognormvariate(-1.2, 0.5) * base * speed
-        probes[k] = _err(ms) if k in failing else _probe(v, ms)
+        probes[k] = _err() if k in failing else _probe(v)
+    probes["scan_total_ms"] = _probe(round(r.lognormvariate(7.6, 0.2) * base * speed, 1))    # e^7.6 ~ 2000 ms
+    probes["libc_open_us"] = _probe(round(r.lognormvariate(1.5, 0.55) * base * speed, 3))    # e^1.5 ~ 4.5 us
     return {"probes": probes}
 
 
